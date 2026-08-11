@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QwenWorkOverlay", "src\QwenWorkOverlay\QwenWorkOverlay.csproj", "{E7A8B81D-A177-4701-AD1A-901A3B2C7D04}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QwenWorkOverlay.Tests", "tests\QwenWorkOverlay.Tests\QwenWorkOverlay.Tests.csproj", "{C44706A0-EA7F-419A-A31B-05CC17D9F704}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E7A8B81D-A177-4701-AD1A-901A3B2C7D04}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E7A8B81D-A177-4701-AD1A-901A3B2C7D04}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E7A8B81D-A177-4701-AD1A-901A3B2C7D04}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E7A8B81D-A177-4701-AD1A-901A3B2C7D04}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C44706A0-EA7F-419A-A31B-05CC17D9F704}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C44706A0-EA7F-419A-A31B-05CC17D9F704}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C44706A0-EA7F-419A-A31B-05CC17D9F704}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C44706A0-EA7F-419A-A31B-05CC17D9F704}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

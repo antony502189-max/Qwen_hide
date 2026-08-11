@@ -1,0 +1,13 @@
+.tools/
+.vs/
+bin/
+obj/
+dist/
+publish/
+logs/
+*.user
+*.suo
+*.cache
+*.tmp
+*.log
+TestResults/
