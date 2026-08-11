@@ -10,9 +10,9 @@ if (-not $OutputPath) {
     $OutputPath = Join-Path $artifacts 'runtime-probe.json'
 }
 
+if (-not ('QdcProbeNative' -as [type])) {
 Add-Type @'
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -37,14 +37,15 @@ public static class QdcProbeNative {
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 }
 '@
+}
 
-function Get-QwenWindows([int]$Pid) {
+function Get-QwenWindows([int]$ProcessId) {
     $items = [System.Collections.Generic.List[object]]::new()
     $callback = [QdcProbeNative+EnumWindowsProc]{
         param([IntPtr]$hWnd, [IntPtr]$lParam)
         [uint32]$ownerPid = 0
         [void][QdcProbeNative]::GetWindowThreadProcessId($hWnd, [ref]$ownerPid)
-        if ($ownerPid -eq $Pid) {
+        if ($ownerPid -eq $ProcessId) {
             $rect = New-Object QdcProbeNative+RECT
             [void][QdcProbeNative]::GetWindowRect($hWnd, [ref]$rect)
             $items.Add([pscustomobject]@{
@@ -79,7 +80,8 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match
         } catch {}
         try {
             $sig = Get-AuthenticodeSignature -FilePath $path
-            $signature = [pscustomobject]@{ status=$sig.Status.ToString(); signer=$sig.SignerCertificate.Subject }
+            $signer = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { $null }
+            $signature = [pscustomobject]@{ status=$sig.Status.ToString(); signer=$signer }
         } catch {}
     }
     try {
@@ -94,13 +96,15 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match
         version = $version
         signature = $signature
         frameworkHints = @($modules | Where-Object { $_ -match 'electron|chrome|cef|webview|qt|angle|v8|node' })
-        windows = @(Get-QwenWindows -Pid $p.Id)
+        windows = @(Get-QwenWindows -ProcessId $p.Id)
     }
 }
 
 $controller = @()
 Get-Process -Name 'QwenDesktopController' -ErrorAction SilentlyContinue | ForEach-Object {
-    $controller += [pscustomobject]@{ pid=$_.Id; mainWindowTitle=$_.MainWindowTitle; path=$(try {$_.Path} catch {$null}) }
+    $controllerPath = $null
+    try { $controllerPath = $_.Path } catch {}
+    $controller += [pscustomobject]@{ pid=$_.Id; mainWindowTitle=$_.MainWindowTitle; path=$controllerPath }
 }
 
 $result = [ordered]@{
