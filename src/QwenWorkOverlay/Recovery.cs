@@ -34,7 +34,7 @@ public sealed class WindowRecoveryService
     public string JournalPath => _path;
     public bool HasPendingSnapshot => File.Exists(_path);
 
-    public void Save(QwenTarget target, IntPtr originalExStyle, bool originalTopMost, bool originalVisible,
+    public bool Save(QwenTarget target, IntPtr originalExStyle, bool originalTopMost, bool originalVisible,
         bool originalLayered, byte originalAlpha, uint originalLayerFlags, uint originalColorKey)
     {
         try
@@ -57,10 +57,32 @@ public sealed class WindowRecoveryService
             var temp = _path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(temp, _path, true);
+
+            // Read the file back before mutating the external Qwen HWND. If persistence is unavailable or
+            // corrupt, a hard crash could otherwise leave Qwen permanently click-through/transparent.
+            var verify = TryReadSnapshot();
+            var ok = verify is not null &&
+                     verify.ProcessId == snapshot.ProcessId &&
+                     verify.ProcessStartUtcTicks == snapshot.ProcessStartUtcTicks &&
+                     verify.Hwnd == snapshot.Hwnd &&
+                     verify.OriginalExStyle == snapshot.OriginalExStyle &&
+                     verify.OriginalTopMost == snapshot.OriginalTopMost &&
+                     verify.OriginalVisible == snapshot.OriginalVisible &&
+                     verify.OriginalLayered == snapshot.OriginalLayered &&
+                     verify.OriginalAlpha == snapshot.OriginalAlpha &&
+                     verify.OriginalLayerFlags == snapshot.OriginalLayerFlags &&
+                     verify.OriginalColorKey == snapshot.OriginalColorKey;
+            if (!ok)
+            {
+                _log.Error("Qwen recovery journal verification failed; refusing unsafe native window mutation");
+                return false;
+            }
+            return true;
         }
         catch (Exception ex)
         {
             _log.Error("Could not persist Qwen window recovery snapshot: " + ex.GetType().Name);
+            return false;
         }
     }
 
