@@ -1,27 +1,140 @@
-using System.Windows.Interop;
 using System.Runtime.InteropServices;
+using System.Windows.Interop;
 
 namespace QwenWorkOverlay;
+
+public sealed record HotkeyRegistration(int Id, string Name, bool Registered, int Win32Error);
+
 public sealed class GlobalHotkeys : IDisposable
 {
-    private readonly IntPtr _hwnd; private readonly HwndSource _source; private readonly Action<int> _action; private readonly RightCtrlStateMachine _rightCtrl=new();
-    private const int WM_HOTKEY=0x0312, WM_KEYDOWN=0x100, WM_KEYUP=0x101, MOD_ALT=1, MOD_CONTROL=2, MOD_SHIFT=4;
-    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h,int id,uint modifiers,uint key);
-    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h,int id);
-    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id,LowLevelKeyboardProc p,IntPtr m,uint t);
-    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h); [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h,int n,IntPtr w,IntPtr l);
-    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string? n); [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
-    private delegate IntPtr LowLevelKeyboardProc(int n,IntPtr w,IntPtr l); private readonly LowLevelKeyboardProc _hookProc; private readonly IntPtr _hook;
+    private readonly IntPtr _hwnd;
+    private readonly HwndSource _source;
+    private readonly Action<int> _action;
+    private readonly AppLogger _log;
+    private readonly RightCtrlStateMachine _rightCtrl = new();
+    private readonly List<HotkeyRegistration> _registrations = new();
+
+    private const int WM_HOTKEY = 0x0312;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_KEYUP = 0x0101;
+    private const uint MOD_ALT = 0x0001;
+    private const uint MOD_CONTROL = 0x0002;
+    private const uint MOD_SHIFT = 0x0004;
+    private const uint MOD_NOREPEAT = 0x4000;
+    private const int WH_KEYBOARD_LL = 13;
+    private const int VK_RCONTROL = 0xA3;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc callback, IntPtr module, uint threadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandle(string? moduleName);
+
+    private delegate IntPtr LowLevelKeyboardProc(int code, IntPtr wParam, IntPtr lParam);
+    private readonly LowLevelKeyboardProc _hookProc;
+    private readonly IntPtr _hook;
+
     public event Action<bool>? RightCtrlChanged;
-    public GlobalHotkeys(Action<int> action)
+    public IReadOnlyList<HotkeyRegistration> Registrations => _registrations;
+    public bool HookReady => _hook != IntPtr.Zero;
+    public bool AllRegistered => _registrations.All(x => x.Registered) && HookReady;
+    public string FailureSummary
     {
-        _action=action; _source=new HwndSource(new HwndSourceParameters("QWO_Hotkeys") { Width=0,Height=0,ParentWindow=IntPtr.Zero,WindowStyle=0 }); _hwnd=_source.Handle; _source.AddHook(WndProc);
-        // IDs: 1 hide, 2 click, 3 top, 4 privacy, 5 opacity+, 6 opacity-, 7 paste, 8 diag, 9 F6, 10 shift F6
-        Reg(1,MOD_CONTROL|MOD_ALT,0x51);Reg(2,MOD_CONTROL|MOD_ALT,0x58);Reg(3,MOD_CONTROL|MOD_ALT,0x54);Reg(4,MOD_CONTROL|MOD_ALT,0x50);Reg(5,MOD_CONTROL|MOD_ALT,0x26);Reg(6,MOD_CONTROL|MOD_ALT,0x28);Reg(7,MOD_CONTROL|MOD_ALT,0x56);Reg(8,MOD_CONTROL|MOD_ALT,0x44);Reg(9,0,0x75);Reg(10,MOD_SHIFT,0x75);
-        _hookProc=KeyboardHook; _hook=SetWindowsHookEx(13,_hookProc,GetModuleHandle(null),0);
+        get
+        {
+            var failed = _registrations.Where(x => !x.Registered).Select(x => $"{x.Name} (win32={x.Win32Error})").ToList();
+            if (!HookReady) failed.Add("Right Ctrl hook");
+            return failed.Count == 0 ? "All global hotkeys registered" : string.Join(", ", failed);
+        }
     }
-    private void Reg(int id,int mod,int key)=>RegisterHotKey(_hwnd,id,(uint)mod,(uint)key);
-    private IntPtr WndProc(IntPtr h,int msg,IntPtr w,IntPtr l,ref bool handled) { if(msg==WM_HOTKEY){_action(w.ToInt32());handled=true;} return IntPtr.Zero; }
-    private IntPtr KeyboardHook(int n,IntPtr w,IntPtr l) { if(n>=0){var vk=Marshal.ReadInt32(l); if(vk==0xA3){if(w.ToInt32()==WM_KEYDOWN&&_rightCtrl.OnDown())RightCtrlChanged?.Invoke(true);else if(w.ToInt32()==WM_KEYUP&&_rightCtrl.OnUp())RightCtrlChanged?.Invoke(false);}}return CallNextHookEx(_hook,n,w,l); }
-    public void Dispose(){for(var i=1;i<=10;i++)UnregisterHotKey(_hwnd,i);if(_hook!=IntPtr.Zero)UnhookWindowsHookEx(_hook);_source.RemoveHook(WndProc);_source.Dispose();}
+
+    public GlobalHotkeys(Action<int> action, AppLogger log)
+    {
+        _action = action;
+        _log = log;
+        _source = new HwndSource(new HwndSourceParameters("QDC_Hotkeys")
+        {
+            Width = 0,
+            Height = 0,
+            ParentWindow = IntPtr.Zero,
+            WindowStyle = 0
+        });
+        _hwnd = _source.Handle;
+        _source.AddHook(WndProc);
+
+        Register(1, "Ctrl+Alt+Q Hide/Show", MOD_CONTROL | MOD_ALT, 0x51);
+        Register(2, "Ctrl+Alt+X Click-through", MOD_CONTROL | MOD_ALT, 0x58);
+        Register(3, "Ctrl+Alt+T TopMost", MOD_CONTROL | MOD_ALT, 0x54);
+        Register(4, "Ctrl+Alt+P Privacy status", MOD_CONTROL | MOD_ALT, 0x50);
+        Register(5, "Ctrl+Alt+Up Opacity+", MOD_CONTROL | MOD_ALT, 0x26);
+        Register(6, "Ctrl+Alt+Down Opacity-", MOD_CONTROL | MOD_ALT, 0x28);
+        Register(7, "Ctrl+Alt+V Paste", MOD_CONTROL | MOD_ALT, 0x56);
+        Register(8, "Ctrl+Alt+D Diagnostics", MOD_CONTROL | MOD_ALT, 0x44);
+        Register(9, "F6 Screenshot", 0, 0x75);
+        Register(10, "Shift+F6 Monitor screenshot", MOD_SHIFT, 0x75);
+
+        _hookProc = KeyboardHook;
+        _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, GetModuleHandle(null), 0);
+        if (_hook == IntPtr.Zero)
+            _log.Error("Right Ctrl low-level keyboard hook registration failed; win32=" + Marshal.GetLastWin32Error());
+        else
+            _log.Info("Right Ctrl low-level keyboard hook registered");
+    }
+
+    private void Register(int id, string name, uint modifiers, uint key)
+    {
+        Marshal.SetLastPInvokeError(0);
+        var ok = RegisterHotKey(_hwnd, id, modifiers | MOD_NOREPEAT, key);
+        var error = ok ? 0 : Marshal.GetLastWin32Error();
+        _registrations.Add(new HotkeyRegistration(id, name, ok, error));
+        if (!ok) _log.Error($"Global hotkey registration failed: {name}; win32={error}");
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message == WM_HOTKEY)
+        {
+            _action(wParam.ToInt32());
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
+    private IntPtr KeyboardHook(int code, IntPtr wParam, IntPtr lParam)
+    {
+        if (code >= 0)
+        {
+            var vk = Marshal.ReadInt32(lParam);
+            if (vk == VK_RCONTROL)
+            {
+                if (wParam.ToInt32() == WM_KEYDOWN && _rightCtrl.OnDown()) RightCtrlChanged?.Invoke(true);
+                else if (wParam.ToInt32() == WM_KEYUP && _rightCtrl.OnUp()) RightCtrlChanged?.Invoke(false);
+            }
+        }
+        return CallNextHookEx(_hook, code, wParam, lParam);
+    }
+
+    public void Dispose()
+    {
+        foreach (var registration in _registrations.Where(x => x.Registered))
+            UnregisterHotKey(_hwnd, registration.Id);
+        if (_hook != IntPtr.Zero) UnhookWindowsHookEx(_hook);
+        _source.RemoveHook(WndProc);
+        _source.Dispose();
+    }
 }
