@@ -17,6 +17,7 @@ public sealed class AppSettings
     public float MicGain { get; set; } = 1f;
     public float SystemGain { get; set; } = 1f;
     public bool RightCtrlAudioEnabled { get; set; } = true;
+    public bool AutoToggleQwenVoiceWithRightCtrl { get; set; } = true;
 
     public double ControllerX { get; set; } = 120;
     public double ControllerY { get; set; } = 120;
