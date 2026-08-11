@@ -1,0 +1,40 @@
+QWEN DESKTOP CONTROLLER — БЫСТРЫЙ ЗАПУСК
+
+1. Сначала открой обычный установленный Qwen Desktop.
+2. Запусти QwenDesktopController.exe.
+3. Никакого второго qwen.ai окна появляться не должно: controller подключается к уже открытому Qwen.
+4. Нажми Ctrl+Alt+D и проверь:
+   - Native Qwen attached: True
+   - Global hotkeys: All global hotkeys registered
+   - Right Ctrl hook: READY
+5. Основные клавиши:
+   Ctrl+Alt+Q        скрыть/показать Qwen
+   Ctrl+Alt+X        click-through ON/OFF
+   Ctrl+Alt+T        TopMost ON/OFF
+   Ctrl+Alt+Up/Down  прозрачность
+   Ctrl+Alt+V        вставить Clipboard в Qwen
+   F6                рабочее окно -> Clipboard
+   Shift+F6          монитор -> Clipboard
+   Right Ctrl HOLD   настроенный mic + system audio mix
+   Ctrl+Alt+Esc      аварийно восстановить Qwen и закрыть controller
+
+ВАЖНО ПО AUDIO:
+Controller не должен менять Windows Default microphone и не должен подменять микрофон Zoom/Teams.
+Для mic + system audio нужен отдельный virtual-audio cable. В Settings controller принимает только распознанный virtual render endpoint и отказывается выводить mix в обычные speakers/headphones/default output.
+
+ВАЖНО ПО CAPTURE PRIVACY:
+В safe native-Qwen режиме controller честно показывает Privacy UNSUPPORTED. Он не делает вид, что WDA_EXCLUDEFROMCAPTURE работает на чужом Qwen HWND. Не считай full-desktop sharing защищённым без отдельной проверки конкретной программы демонстрации.
+
+ДЛЯ ТОЧНОЙ ДИАГНОСТИКИ ТВОЕГО QWEN:
+Если рядом лежит runtime-probe.ps1, запусти в PowerShell:
+
+  powershell -ExecutionPolicy Bypass -File .\runtime-probe.ps1
+
+или из репозитория:
+
+  .\scripts\runtime-probe.ps1
+
+Скрипт создаст runtime-probe.json и НЕ собирает текст чатов, Clipboard, cookies, токены, пароли или audio.
+
+Полный русский гайд: GUIDE_RU.md
+Полный acceptance checklist: MANUAL_TEST_CHECKLIST_EN.md
