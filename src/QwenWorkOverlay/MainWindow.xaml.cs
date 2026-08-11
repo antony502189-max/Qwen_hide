@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
@@ -16,6 +15,7 @@ public partial class MainWindow : Window
     private readonly CaptureProtectionService _capture = new();
     private readonly QwenProcessLocator _locator;
     private readonly QwenWindowController _qwen;
+    private readonly QwenVoiceAutomation _voice;
     private readonly ForegroundWindowTracker _foregroundTracker;
     private readonly DispatcherTimer _attachTimer;
 
@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private Forms.NotifyIcon? _tray;
     private bool _allowExit;
     private bool _launchAttempted;
+    private bool _voiceStartedByHotkey;
 
     public MainWindow(SettingsService settings, AppLogger log)
     {
@@ -33,6 +34,7 @@ public partial class MainWindow : Window
         _audio = new MixedAudioSession(_devices);
         _locator = new QwenProcessLocator(log);
         _qwen = new QwenWindowController(log);
+        _voice = new QwenVoiceAutomation(log);
         _foregroundTracker = new ForegroundWindowTracker(() => _qwen.Target?.Hwnd);
         _attachTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
         _attachTimer.Tick += (_, _) => EnsureAttached(allowLaunch: false);
@@ -60,13 +62,13 @@ public partial class MainWindow : Window
         UpdateStatus();
 
         if (_settings.Current.StartControllerInTray && _qwen.IsAttached)
-            Dispatcher.BeginInvoke(Hide, DispatcherPriority.ApplicationIdle);
+            Dispatcher.BeginInvoke((Action)Hide, DispatcherPriority.ApplicationIdle);
     }
 
     private void CreateTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Open controller", null, (_, _) => ShowController());
+        menu.Items.Add("Open controller", null, (_, _) => Dispatcher.Invoke(ShowController));
         menu.Items.Add("Show Qwen", null, (_, _) => Dispatcher.Invoke(() => _qwen.ShowAndActivate()));
         menu.Items.Add("Toggle click-through", null, (_, _) => Dispatcher.Invoke(ToggleClickThrough));
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -124,6 +126,7 @@ public partial class MainWindow : Window
                 _settings.Current.QwenExecutablePath = target.ExecutablePath;
                 _settings.Save();
             }
+            _voice.Probe(target.Hwnd);
             NativeStatusText.Text = "Attached to the installed Qwen Desktop";
             NativeDetailsText.Text = $"{target.Summary}\n{target.ExecutablePath ?? "Executable path unavailable"}\nClass: {target.WindowClass}";
             _log.Info("Native Qwen attached successfully");
@@ -186,6 +189,7 @@ public partial class MainWindow : Window
         Dispatcher.InvokeAsync(() =>
         {
             if (!_settings.Current.RightCtrlAudioEnabled) return;
+
             if (down)
             {
                 _audio.Start(
@@ -194,14 +198,23 @@ public partial class MainWindow : Window
                     _settings.Current.VirtualMixOutputDeviceId,
                     _settings.Current.MicGain,
                     _settings.Current.SystemGain);
-                Toast(_audio.VirtualOutputReady ? "Qwen audio mix ON" : _audio.InjectionState);
-                _log.Info("Audio mix key down: " + _audio.InjectionState);
+
+                _voiceStartedByHotkey = false;
+                if (_audio.VirtualOutputReady && _settings.Current.AutoToggleQwenVoiceWithRightCtrl && _qwen.Target is not null)
+                    _voiceStartedByHotkey = _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
+
+                var suffix = _voiceStartedByHotkey ? " · Qwen voice toggled ON" : string.Empty;
+                Toast((_audio.VirtualOutputReady ? "Qwen audio mix ON" : _audio.InjectionState) + suffix);
+                _log.Info("Audio mix key down: " + _audio.InjectionState + "; voice=" + _voice.State);
             }
             else
             {
+                if (_voiceStartedByHotkey && _qwen.Target is not null)
+                    _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
+                _voiceStartedByHotkey = false;
                 _audio.Stop();
                 Toast("Qwen audio mix OFF");
-                _log.Info("Audio mix key up");
+                _log.Info("Audio mix key up; voice=" + _voice.State);
             }
             UpdateStatus();
         });
@@ -283,9 +296,9 @@ public partial class MainWindow : Window
     {
         if (_qwen.IsAttached && _qwen.Target is not null)
         {
-            var t = _qwen.Target;
+            var target = _qwen.Target;
             NativeStatusText.Text = "Attached to the installed Qwen Desktop";
-            NativeDetailsText.Text = $"{t.Summary} · {t.WindowTitle}";
+            NativeDetailsText.Text = $"{target.Summary} · {target.WindowTitle}";
             WindowStatusText.Text = $"Opacity {Math.Round(_qwen.Opacity * 100)}% · TopMost {(_qwen.TopMost ? "ON" : "OFF")} · Click-through {(_qwen.ClickThrough ? "ON" : "OFF")}";
         }
         else
@@ -294,8 +307,8 @@ public partial class MainWindow : Window
         }
 
         AudioStatusText.Text = _audio.Running
-            ? $"Audio mix: {_audio.InjectionState} · mic={_audio.MicrophoneReady} · system={_audio.LoopbackReady}"
-            : "Audio mix: idle (Right Ctrl holds the mix when configured)";
+            ? $"Audio mix: {_audio.InjectionState} · mic={_audio.MicrophoneReady} · system={_audio.LoopbackReady} · voice={_voice.State}"
+            : $"Audio mix: idle (Right Ctrl holds the mix when configured) · voice={_voice.State}";
         PrivacyStatusText.Text = "Capture privacy: UNSUPPORTED for an external native Qwen HWND without unsafe injection/replacement";
     }
 
@@ -314,6 +327,7 @@ public partial class MainWindow : Window
     {
         EnsureAttached(allowLaunch: false);
         var target = _qwen.Target;
+        if (target is not null) _voice.Probe(target.Hwnd);
         var defaultsSafe = _deviceGuard.Verify(_devices);
         var text =
             $"Native Qwen attached: {_qwen.IsAttached}\n" +
@@ -327,7 +341,9 @@ public partial class MainWindow : Window
             $"Physical microphone: {(_audio.MicrophoneReady ? "READY" : "IDLE")}\n" +
             $"System loopback: {(_audio.LoopbackReady ? "READY" : "IDLE")}\n" +
             $"Mixer: {(_audio.Running ? "RUNNING" : "IDLE")}\n" +
-            $"Qwen audio target: {_audio.InjectionState}\n\n" +
+            $"Qwen audio target: {_audio.InjectionState}\n" +
+            $"Qwen voice automation: {_voice.State}\n" +
+            $"Matched voice control: {_voice.LastMatchedButton ?? "n/a"}\n\n" +
             $"Capture privacy: {_capture.Status}\n" +
             $"Windows audio defaults unchanged: {defaultsSafe}\n" +
             $"Default input before: {_deviceGuard.InputBefore}\n" +
@@ -389,17 +405,27 @@ public partial class MainWindow : Window
         }
 
         _attachTimer.Stop();
+        if (_voiceStartedByHotkey && _qwen.Target is not null)
+            _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
+        _voiceStartedByHotkey = false;
         _audio.Stop();
         _qwen.Dispose();
         _foregroundTracker.Dispose();
         _hotkeys?.Dispose();
         _tray?.Dispose();
-        _devices.Dispose();
         _settings.Current.ControllerX = Left;
         _settings.Current.ControllerY = Top;
         _settings.Save();
-        var safe = _deviceGuard.Verify(new AudioDeviceService());
-        _log.Info("Shutdown; Windows audio defaults unchanged=" + safe);
+
+        var defaultsSafe = false;
+        try
+        {
+            using var verifier = new AudioDeviceService();
+            defaultsSafe = _deviceGuard.Verify(verifier);
+        }
+        catch { }
+        _devices.Dispose();
+        _log.Info("Shutdown; Windows audio defaults unchanged=" + defaultsSafe);
         _log.Info("Shutdown complete");
     }
 }
