@@ -19,7 +19,7 @@ public sealed class NativeRecoveryIntegrationTests
         {
             try
             {
-                form = new System.Windows.Forms.Form
+                var createdForm = new System.Windows.Forms.Form
                 {
                     Text = "QDC native recovery integration test",
                     Width = 520,
@@ -29,8 +29,9 @@ public sealed class NativeRecoveryIntegrationTests
                     Left = 50,
                     Top = 50
                 };
-                form.Shown += (_, _) => ready.Set();
-                System.Windows.Forms.Application.Run(form);
+                form = createdForm;
+                createdForm.Shown += (_, _) => ready.Set();
+                System.Windows.Forms.Application.Run(createdForm);
             }
             catch (Exception ex)
             {
@@ -48,7 +49,8 @@ public sealed class NativeRecoveryIntegrationTests
         Assert.True(ready.Wait(TimeSpan.FromSeconds(10)), "Test HWND did not become ready.");
         if (uiError is not null) throw new Xunit.Sdk.XunitException("Test UI thread failed: " + uiError);
         Assert.NotNull(form);
-        var hwnd = form!.Handle;
+        var testForm = form!;
+        var hwnd = testForm.Handle;
         Assert.NotEqual(IntPtr.Zero, hwnd);
 
         var tempRoot = Path.Combine(Path.GetTempPath(), "QdcRecoveryTests", Guid.NewGuid().ToString("N"));
@@ -66,7 +68,7 @@ public sealed class NativeRecoveryIntegrationTests
                 hwnd,
                 "QdcTestHost",
                 process.MainModule?.FileName,
-                form.Text,
+                testForm.Text,
                 "WindowsForms10.Window",
                 process.StartTime.ToUniversalTime().Ticks);
 
@@ -90,7 +92,7 @@ public sealed class NativeRecoveryIntegrationTests
         }
         finally
         {
-            try { form?.BeginInvoke((Action)(() => form.Close())); } catch { }
+            try { testForm.BeginInvoke((Action)testForm.Close); } catch { }
             Assert.True(uiThread.Join(TimeSpan.FromSeconds(10)), "Test HWND thread did not shut down.");
             try { Directory.Delete(tempRoot, true); } catch { }
         }
