@@ -10,7 +10,8 @@ Run these tests on the target Windows machine with the actual installed Qwen Des
 - [ ] Existing model selection is visible.
 - [ ] Start `QwenDesktopController.exe`.
 - [ ] No second qwen.ai/WebView Qwen window appears.
-- [ ] Diagnostics reports the actual Qwen PID/HWND/executable path.
+- [ ] Diagnostics reports the actual Qwen PID/HWND/executable path/window class.
+- [ ] Starting a second controller instance is refused and does not attach twice.
 - [ ] Closing the controller does not close or damage Qwen.
 
 ## B. Window controls
@@ -20,10 +21,12 @@ Run these tests on the target Windows machine with the actual installed Qwen Des
 - [ ] `Ctrl+Alt+Up` increases opacity.
 - [ ] `Ctrl+Alt+Down` decreases opacity.
 - [ ] Qwen remains usable after opacity changes.
+- [ ] 100% opacity removes controller-added layered alpha when Qwen did not originally use it.
 - [ ] `Ctrl+Alt+T` toggles TopMost.
 - [ ] `Ctrl+Alt+Q` hides and restores the same Qwen process/session.
+- [ ] Minimize/maximize Qwen and repeat the controls; its normal window state remains usable.
 
-## C. Click-through
+## C. Click-through and emergency recovery
 
 - [ ] Put Qwen over VS Code/Notepad.
 - [ ] Press `Ctrl+Alt+X`.
@@ -32,6 +35,8 @@ Run these tests on the target Windows machine with the actual installed Qwen Des
 - [ ] Press `Ctrl+Alt+X` again.
 - [ ] Qwen receives normal mouse input again.
 - [ ] Qwen scrolling, typing, file dialogs and copy/paste still work afterward.
+- [ ] Turn click-through ON again, then press `Ctrl+Alt+Esc`.
+- [ ] Controller exits and restores the original Qwen window style/interaction.
 
 ## D. Screenshot → Clipboard
 
@@ -39,9 +44,12 @@ Run these tests on the target Windows machine with the actual installed Qwen Des
 - [ ] Press `F6`.
 - [ ] Open Paint and press `Ctrl+V`.
 - [ ] The intended work window is present in the clipboard image.
-- [ ] Qwen is not visibly composited over that image when `PrintWindow` succeeds.
+- [ ] Repeat with a Chromium/Electron app; a black `PrintWindow` result must fall back to screen-copy capture.
+- [ ] Qwen is not visibly composited over the fallback image.
+- [ ] Qwen returns to the same visible/minimized/maximized state after capture.
 - [ ] No screenshot PNG/JPG was created by the controller.
 - [ ] Press `Shift+F6` and verify the monitor screenshot appears in the Clipboard.
+- [ ] Repeatedly press F6 while another app is also using the Clipboard; the retry logic must not crash the controller.
 
 ## E. Clipboard → existing Qwen
 
@@ -52,12 +60,21 @@ Run these tests on the target Windows machine with the actual installed Qwen Des
 - [ ] No extra prompt/instruction was added.
 - [ ] Repeat with an image if Qwen supports normal image paste on this build.
 
-## F. Audio isolation — CRITICAL
+## F. Global hotkeys
+
+- [ ] `Ctrl+Alt+D` Diagnostics reports `All global hotkeys registered`.
+- [ ] Right Ctrl hook reports READY.
+- [ ] If a hotkey is occupied by another application, Diagnostics reports the exact failed hotkey instead of silently pretending it works.
+- [ ] Holding a registered hotkey does not repeatedly retrigger it because MOD_NOREPEAT is used.
+- [ ] Right Ctrl key repeat does not start multiple audio sessions.
+
+## G. Audio isolation — CRITICAL
 
 Before starting:
 
 - [ ] Note the Windows Default Input Device.
 - [ ] Note the Windows Default Communications Input Device.
+- [ ] Note the Windows Default Output Device.
 - [ ] Start Teams/Zoom/Telemost and verify it uses the physical microphone.
 - [ ] Confirm your voice reaches the call application normally.
 
@@ -67,17 +84,21 @@ Controller test:
 - [ ] Select the physical microphone.
 - [ ] Select the normal playback endpoint for WASAPI loopback.
 - [ ] If using a virtual cable, select only its recognized render endpoint as `Virtual mix output`.
+- [ ] Verify a physical speaker/headset cannot be accepted as the virtual mix destination.
+- [ ] Verify the Windows default/communications output cannot be selected as a mix destination.
 - [ ] Verify the virtual cable has NOT become Windows Default Input.
 - [ ] Configure only Qwen to use the paired virtual capture endpoint where supported.
 - [ ] Hold Right Ctrl.
-- [ ] Controller diagnostics shows microphone capture READY/RUNNING.
-- [ ] Controller diagnostics shows system loopback READY/RUNNING.
-- [ ] Mixer reports running/frames.
+- [ ] Diagnostics shows microphone capture READY.
+- [ ] Diagnostics shows system loopback READY.
+- [ ] Diagnostics shows the recognized virtual output READY.
+- [ ] `Mic bytes`, `Loopback bytes` and `Mixed frames` increase while the corresponding signals exist.
 - [ ] Qwen receives your voice through the configured Qwen-only path.
 - [ ] Qwen receives system/call audio through the configured Qwen-only path.
 - [ ] Teams/Zoom still receives your physical microphone.
 - [ ] System playback is NOT echoed back into the Teams/Zoom microphone.
-- [ ] Release Right Ctrl and verify the mix stops.
+- [ ] Release Right Ctrl and verify the mix stops cleanly.
+- [ ] Repeat Right Ctrl down/up at least 20 times; no stale callbacks, crashes or duplicate sessions occur.
 
 After closing controller:
 
@@ -88,7 +109,7 @@ After closing controller:
 
 Any failure in this section is an acceptance blocker for audio use.
 
-## G. Qwen voice-button automation
+## H. Qwen voice-button automation
 
 - [ ] Open Diagnostics with Qwen visible.
 - [ ] Check `Qwen voice automation` status.
@@ -99,27 +120,55 @@ Any failure in this section is an acceptance blocker for audio use.
 - [ ] Qwen's existing voice input stops/toggles back if supported.
 - [ ] If automation is unavailable, disabling it in Settings leaves manual Qwen voice usage normal.
 
-## H. Restore behavior
+## I. Qwen restart/re-attach
+
+- [ ] Start controller and verify it is attached.
+- [ ] Exit only Qwen Desktop while leaving the controller running.
+- [ ] Controller detects the stale HWND without crashing.
+- [ ] Start Qwen Desktop again.
+- [ ] Controller reacquires the new PID/HWND automatically.
+- [ ] Opacity/TopMost settings are applied to the new Qwen window.
+- [ ] Existing Qwen data/session behavior remains Qwen's own behavior and is not recreated by the controller.
+
+## J. Crash recovery journal — CRITICAL
+
+This test deliberately terminates the controller to simulate a crash.
+
+- [ ] Start Qwen and controller.
+- [ ] Turn on transparency, TopMost and click-through.
+- [ ] Confirm `%LOCALAPPDATA%\QwenDesktopController\window-recovery.json` exists while Qwen is being controlled.
+- [ ] Kill **only** `QwenDesktopController.exe` from Task Manager. Do not kill Qwen.
+- [ ] Qwen may temporarily retain the modified native window style because graceful cleanup was bypassed.
+- [ ] Start `QwenDesktopController.exe` again.
+- [ ] Before re-attaching, the controller restores the previous Qwen native style from the journal.
+- [ ] The journal is deleted only after restoration is verified.
+- [ ] Qwen is not left permanently click-through or transparent.
+- [ ] Repeat once while Qwen is closed before controller restart; stale journal is discarded without touching any unrelated HWND/PID.
+
+## K. Normal restore behavior
 
 - [ ] Note Qwen opacity/topmost/click behavior before controller test.
 - [ ] Turn on controller transparency/click-through/topmost changes.
-- [ ] Exit the controller from the tray using **Exit controller**.
+- [ ] Exit the controller from the tray using **Exit controller (restore Qwen)**.
 - [ ] Qwen remains running.
 - [ ] Qwen mouse interaction is normal.
 - [ ] Controller-specific click-through is gone.
-- [ ] The controller restores the original Qwen extended window style as far as the OS permits.
+- [ ] Original Qwen extended style/TopMost/visibility is restored.
+- [ ] No recovery journal remains after verified successful restore.
 
-## I. Capture privacy limitation
+## L. Capture privacy limitation
 
 - [ ] Diagnostics explicitly says safe native capture privacy is unsupported for the external Qwen HWND.
 - [ ] The controller does not show a false green `WDA_EXCLUDEFROMCAPTURE` status.
+- [ ] The controller does not inject a DLL into Qwen or patch Qwen binaries.
 - [ ] Test your real conferencing app by sharing a specific work window and confirm Qwen is not part of that shared window.
 - [ ] Do not treat full-desktop sharing as protected until you have verified it with your exact capture pipeline.
 
-## J. Build/package
+## M. Build/package
 
+- [ ] GitHub Actions architecture guard passes and confirms no WebView2/Qwen web wrapper was reintroduced.
 - [ ] `scripts\setup.ps1` succeeds.
 - [ ] `scripts\build.ps1` succeeds.
-- [ ] Unit tests pass.
-- [ ] `dist\QwenDesktopController.exe` exists.
-- [ ] The published executable launches on the target Windows PC.
+- [ ] Automated tests pass.
+- [ ] CI verifies `dist\QwenDesktopController.exe` exists and emits its SHA-256.
+- [ ] The self-contained win-x64 artifact launches on the target Windows PC without Visual Studio.
