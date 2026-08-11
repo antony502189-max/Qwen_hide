@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-test-publish:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,39 +64,38 @@ jobs:
       - name: Test
         run: dotnet test QwenWorkOverlay.sln -c Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory TestResults
 
-      - name: Publish win-x64
+      - name: Publish win-x64 reliable multi-file
         run: dotnet publish src/QwenWorkOverlay/QwenWorkOverlay.csproj -c Release -r win-x64 --self-contained true -o dist
+
+      - name: Publish win-x64 single-file variant
+        run: dotnet publish src/QwenWorkOverlay/QwenWorkOverlay.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o dist-single
 
       - name: Package runtime probe and guides
         shell: pwsh
         run: |
-          Copy-Item scripts\runtime-probe.ps1 dist\runtime-probe.ps1 -Force
-          Copy-Item scripts\diagnose.ps1 dist\diagnose.ps1 -Force
-          Copy-Item scripts\setup-virtual-audio.ps1 dist\setup-virtual-audio.ps1 -Force
-          Copy-Item README.md dist\README.md -Force
-          Copy-Item GUIDE_EN.md dist\GUIDE_EN.md -Force
-          Copy-Item GUIDE_RU.md dist\GUIDE_RU.md -Force
-          Copy-Item MANUAL_TEST_CHECKLIST_EN.md dist\MANUAL_TEST_CHECKLIST_EN.md -Force
-          Copy-Item RUN_ME_FIRST_RU.txt dist\RUN_ME_FIRST_RU.txt -Force
+          $extras = @('runtime-probe.ps1','diagnose.ps1','setup-virtual-audio.ps1')
+          foreach ($name in $extras) { Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist' $name) -Force; Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist-single' $name) -Force }
+          $docs = @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')
+          foreach ($name in $docs) { Copy-Item $name (Join-Path 'dist' $name) -Force; Copy-Item $name (Join-Path 'dist-single' $name) -Force }
 
-      - name: Verify release payload
+      - name: Verify release payloads and generate hashes
         shell: pwsh
         run: |
-          $required = @(
-            'dist\QwenDesktopController.exe',
-            'dist\runtime-probe.ps1',
-            'dist\diagnose.ps1',
-            'dist\setup-virtual-audio.ps1',
-            'dist\GUIDE_RU.md',
-            'dist\RUN_ME_FIRST_RU.txt'
-          )
-          foreach ($path in $required) {
-            if (-not (Test-Path $path)) { throw "Required release file not found: $path" }
+          foreach ($dir in @('dist','dist-single')) {
+            $required = @('QwenDesktopController.exe','runtime-probe.ps1','diagnose.ps1','setup-virtual-audio.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
+            foreach ($name in $required) {
+              $path = Join-Path $dir $name
+              if (-not (Test-Path $path)) { throw "Required release file not found: $path" }
+            }
+            $exe = Get-Item (Join-Path $dir 'QwenDesktopController.exe')
+            if ($exe.Length -lt 100KB) { throw "Release executable is unexpectedly small: $($exe.Length) bytes" }
+            $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+            "QwenDesktopController.exe  SHA256  $hash" | Set-Content -Encoding ASCII (Join-Path $dir 'SHA256SUMS.txt')
+            Write-Host "$dir EXE bytes: $($exe.Length)"
+            Write-Host "$dir EXE SHA256: $hash"
           }
-          $exe = Get-Item 'dist\QwenDesktopController.exe'
-          if ($exe.Length -lt 100KB) { throw "Release executable is unexpectedly small: $($exe.Length) bytes" }
-          Get-FileHash $exe.FullName -Algorithm SHA256 | Format-List
-          Write-Host "Release bytes: $($exe.Length)"
+          $singleDlls = @(Get-ChildItem dist-single -Filter 'QwenDesktopController.dll' -File -ErrorAction SilentlyContinue)
+          if ($singleDlls.Count -gt 0) { throw 'Single-file publish unexpectedly contains QwenDesktopController.dll.' }
 
       - name: Upload test results
         if: always()
@@ -107,10 +106,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload release artifact
+      - name: Upload reliable multi-file release
         uses: actions/upload-artifact@v4
         with:
           name: QwenDesktopController-win-x64
           path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload single-file release
+        uses: actions/upload-artifact@v4
+        with:
+          name: QwenDesktopController-win-x64-single
+          path: dist-single/
           if-no-files-found: error
           retention-days: 90
