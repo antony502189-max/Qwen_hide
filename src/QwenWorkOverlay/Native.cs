@@ -22,6 +22,9 @@ internal static class Native
     public const uint SWP_FRAMECHANGED = 0x0020;
 
     public const int SW_HIDE = 0;
+    public const int SW_SHOWMINIMIZED = 2;
+    public const int SW_SHOWMAXIMIZED = 3;
+    public const int SW_SHOWNOACTIVATE = 4;
     public const int SW_SHOW = 5;
     public const int SW_RESTORE = 9;
     public const uint GA_ROOT = 2;
@@ -33,7 +36,8 @@ internal static class Native
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr", SetLastError = true)]
     private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
 
-    public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex) => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : new IntPtr(GetWindowLong32(hWnd, nIndex));
+    public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex) =>
+        IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : new IntPtr(GetWindowLong32(hWnd, nIndex));
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLong", SetLastError = true)]
     private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int value);
@@ -44,7 +48,9 @@ internal static class Native
     public static IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr value)
     {
         Marshal.SetLastPInvokeError(0);
-        return IntPtr.Size == 8 ? SetWindowLongPtr64(hWnd, nIndex, value) : new IntPtr(SetWindowLong32(hWnd, nIndex, value.ToInt32()));
+        return IntPtr.Size == 8
+            ? SetWindowLongPtr64(hWnd, nIndex, value)
+            : new IntPtr(SetWindowLong32(hWnd, nIndex, value.ToInt32()));
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -70,6 +76,14 @@ internal static class Native
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsZoomed(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
