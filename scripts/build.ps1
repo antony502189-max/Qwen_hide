@@ -15,6 +15,8 @@ if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
 & $dotnet publish $project -c Release -r win-x64 --self-contained true -o $dist
 
 Copy-Item (Join-Path $root 'scripts\runtime-probe.ps1') (Join-Path $dist 'runtime-probe.ps1') -Force
+Copy-Item (Join-Path $root 'scripts\diagnose.ps1') (Join-Path $dist 'diagnose.ps1') -Force
+Copy-Item (Join-Path $root 'scripts\setup-virtual-audio.ps1') (Join-Path $dist 'setup-virtual-audio.ps1') -Force
 Copy-Item (Join-Path $root 'README.md') (Join-Path $dist 'README.md') -Force
 Copy-Item (Join-Path $root 'GUIDE_EN.md') (Join-Path $dist 'GUIDE_EN.md') -Force
 Copy-Item (Join-Path $root 'GUIDE_RU.md') (Join-Path $dist 'GUIDE_RU.md') -Force
@@ -27,4 +29,6 @@ $hash = Get-FileHash $exe -Algorithm SHA256
 Write-Host "Release executable: $exe"
 Write-Host "SHA256: $($hash.Hash)"
 Write-Host "Runtime probe: $(Join-Path $dist 'runtime-probe.ps1')"
+Write-Host "Diagnostics helper: $(Join-Path $dist 'diagnose.ps1')"
+Write-Host "Virtual-audio helper: $(Join-Path $dist 'setup-virtual-audio.ps1')"
 Write-Host "Russian guide: $(Join-Path $dist 'GUIDE_RU.md')"
