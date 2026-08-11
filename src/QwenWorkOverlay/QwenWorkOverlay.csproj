@@ -15,5 +15,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <Reference Include="UIAutomationClient" />
+    <Reference Include="UIAutomationTypes" />
   </ItemGroup>
 </Project>
