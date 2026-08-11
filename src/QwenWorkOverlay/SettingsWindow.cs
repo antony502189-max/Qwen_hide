@@ -18,7 +18,7 @@ public sealed class SettingsWindow : Window
     {
         Title = "Qwen Desktop Controller Settings";
         Width = 620;
-        Height = 660;
+        Height = 690;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(17, 24, 39));
         Foreground = System.Windows.Media.Brushes.White;
@@ -80,7 +80,9 @@ public sealed class SettingsWindow : Window
         panel.Children.Add(gains);
 
         var right = new CheckBox { Content = "Hold Right Ctrl to feed the configured mix to the virtual cable", IsChecked = s.RightCtrlAudioEnabled, Margin = new Thickness(0, 8, 0, 0) };
+        var voiceToggle = new CheckBox { Content = "Also try to toggle Qwen's existing voice button on Right Ctrl down/up", IsChecked = s.AutoToggleQwenVoiceWithRightCtrl, Margin = new Thickness(0, 4, 0, 0) };
         panel.Children.Add(right);
+        panel.Children.Add(voiceToggle);
 
         var appAudioSettings = new Button { Content = "Open Windows per-app audio settings", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 10, 0, 0) };
         appAudioSettings.Click += (_, _) =>
@@ -92,7 +94,7 @@ public sealed class SettingsWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "If Qwen lets you choose an input device, select the capture side paired with the virtual cable. If it does not, Windows per-app input routing may be used manually where supported. Do not change the global default microphone just for this controller.",
+            Text = "If Qwen lets you choose an input device, select the capture side paired with the virtual cable. If it does not, Windows per-app input routing may be used manually where supported. Do not change the global default microphone just for this controller. Voice-button automation is best-effort and falls back to manual use if Qwen does not expose the button through Windows accessibility.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(170, 180, 195)),
             Margin = new Thickness(0, 8, 0, 0)
@@ -110,6 +112,7 @@ public sealed class SettingsWindow : Window
             s.LoopbackDeviceId = loopback.SelectedValue as string;
             s.VirtualMixOutputDeviceId = virtualMix.SelectedValue as string;
             s.RightCtrlAudioEnabled = right.IsChecked == true;
+            s.AutoToggleQwenVoiceWithRightCtrl = voiceToggle.IsChecked == true;
 
             if (!float.TryParse(mg.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var micGain)) micGain = 1f;
             if (!float.TryParse(sg.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var systemGain)) systemGain = 1f;
