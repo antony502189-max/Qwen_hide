@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Threading;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 
