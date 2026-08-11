@@ -95,11 +95,14 @@ public sealed class NativeWindowControllerIntegrationTests
 
             Assert.True(controller.SetClickThrough(false));
             styled = NativeTest.GetWindowLongPtr(hwnd, NativeTest.GWL_EXSTYLE).ToInt64();
-            Assert.Equal(originalStyle, styled);
+            // Controller TopMost is still enabled here; only the opacity/click-through bits should have returned
+            // to their original values. TopMost is intentionally removed in the next assertion block.
+            Assert.Equal(originalStyle | NativeTest.WS_EX_TOPMOST, styled);
 
             Assert.True(controller.SetTopMost(false));
             styled = NativeTest.GetWindowLongPtr(hwnd, NativeTest.GWL_EXSTYLE).ToInt64();
             Assert.Equal(0, styled & NativeTest.WS_EX_TOPMOST);
+            Assert.Equal(originalStyle, styled);
 
             Assert.True(controller.ToggleVisibility());
             Assert.True(SpinWait.SpinUntil(() => !NativeTest.IsWindowVisible(hwnd), TimeSpan.FromSeconds(3)));
