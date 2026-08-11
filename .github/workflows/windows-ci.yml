@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-test-publish:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,6 +23,16 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Architecture guard - no embedded Qwen WebView
+        shell: pwsh
+        run: |
+          $patterns = 'Microsoft.Web.WebView2|CoreWebView2|<wv:WebView2'
+          $hits = Get-ChildItem src -Recurse -File | Where-Object { $_.Extension -in '.cs','.xaml','.csproj' } | Select-String -Pattern $patterns
+          if ($hits) {
+            $hits | ForEach-Object { Write-Host "$($_.Path):$($_.LineNumber): $($_.Line)" }
+            throw 'Embedded WebView/Qwen wrapper code is forbidden in native-controller mode.'
+          }
+
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
 
@@ -30,10 +40,29 @@ jobs:
         run: dotnet build QwenWorkOverlay.sln -c Release --no-restore
 
       - name: Test
-        run: dotnet test QwenWorkOverlay.sln -c Release --no-build --logger "trx;LogFileName=tests.trx"
+        run: dotnet test QwenWorkOverlay.sln -c Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory TestResults
 
       - name: Publish win-x64
         run: dotnet publish src/QwenWorkOverlay/QwenWorkOverlay.csproj -c Release -r win-x64 --self-contained true -o dist
+
+      - name: Verify release payload
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'dist\QwenDesktopController.exe'
+          if (-not (Test-Path $exe)) { throw "Release executable not found: $exe" }
+          $file = Get-Item $exe
+          if ($file.Length -lt 100KB) { throw "Release executable is unexpectedly small: $($file.Length) bytes" }
+          Get-FileHash $exe -Algorithm SHA256 | Format-List
+          Write-Host "Release bytes: $($file.Length)"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QwenDesktopController-test-results
+          path: TestResults/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
@@ -41,3 +70,4 @@ jobs:
           name: QwenDesktopController-win-x64
           path: dist/
           if-no-files-found: error
+          retention-days: 90
