@@ -169,7 +169,7 @@ public static class AudioMixer
         {
             var value = (i < microphone.Length ? microphone[i] * micGain : 0) +
                         (i < system.Length ? system[i] * systemGain : 0);
-            output[i] = MathF.Tanh(value); // smooth limiter: no hard clipping reaches the virtual cable
+            output[i] = MathF.Tanh(value);
         }
         return output;
     }
@@ -177,27 +177,32 @@ public static class AudioMixer
 
 public sealed class MixedAudioSession : IDisposable
 {
-    private const int PumpFrames = 480; // 10 ms at 48 kHz
-    private const int MaxQueuedFrames = AudioFormatConverter.TargetSampleRate / 2; // 500 ms safety bound
-    private const int TrimToFrames = AudioFormatConverter.TargetSampleRate / 4; // trim excess latency to ~250 ms
+    private const int PumpFrames = 480;
+    private const int MaxQueuedFrames = AudioFormatConverter.TargetSampleRate / 2;
+    private const int TrimToFrames = AudioFormatConverter.TargetSampleRate / 4;
 
     private readonly AudioDeviceService _devices;
     private readonly AppLogger? _log;
     private readonly ConcurrentQueue<float> _microphoneFrames = new();
     private readonly ConcurrentQueue<float> _loopbackFrames = new();
+    private readonly object _lifecycleGate = new();
     private WasapiCapture? _mic;
     private WasapiLoopbackCapture? _loopback;
     private WasapiOut? _virtualOutput;
     private BufferedWaveProvider? _mixedProvider;
     private System.Threading.Timer? _pump;
+    private int _generation;
+    private long _microphoneBytes;
+    private long _loopbackBytes;
+    private long _mixedFrames;
 
     public bool MicrophoneReady { get; private set; }
     public bool LoopbackReady { get; private set; }
     public bool VirtualOutputReady { get; private set; }
     public bool Running { get; private set; }
-    public long MicrophoneBytes { get; private set; }
-    public long LoopbackBytes { get; private set; }
-    public long MixedFrames { get; private set; }
+    public long MicrophoneBytes => Interlocked.Read(ref _microphoneBytes);
+    public long LoopbackBytes => Interlocked.Read(ref _loopbackBytes);
+    public long MixedFrames => Interlocked.Read(ref _mixedFrames);
     public string MicrophoneState { get; private set; } = "Idle";
     public string LoopbackState { get; private set; } = "Idle";
     public string VirtualOutputState { get; private set; } = "Not configured";
@@ -211,34 +216,38 @@ public sealed class MixedAudioSession : IDisposable
 
     public void Start(string? microphoneId, string? loopbackId, string? virtualMixOutputId, float micGain, float systemGain)
     {
-        if (Running) return;
-        Stop();
-        _microphoneFrames.Clear();
-        _loopbackFrames.Clear();
-        MicrophoneBytes = 0;
-        LoopbackBytes = 0;
-        MixedFrames = 0;
-        InjectionState = "Initializing";
-
-        StartMicrophone(microphoneId);
-        StartLoopback(loopbackId);
-        StartVirtualOutput(virtualMixOutputId, loopbackId);
-
-        if (VirtualOutputReady)
+        lock (_lifecycleGate)
         {
-            _pump = new System.Threading.Timer(_ => Pump(micGain, systemGain), null, 0, 10);
-            InjectionState = "READY: virtual cable receives the mixed stream; select its paired microphone in Qwen";
-        }
-        else if (string.IsNullOrWhiteSpace(InjectionState))
-        {
-            InjectionState = "Unavailable: virtual mix output is not configured";
-        }
+            if (Running) return;
+            StopCore();
+            var generation = ++_generation;
+            _microphoneFrames.Clear();
+            _loopbackFrames.Clear();
+            Interlocked.Exchange(ref _microphoneBytes, 0);
+            Interlocked.Exchange(ref _loopbackBytes, 0);
+            Interlocked.Exchange(ref _mixedFrames, 0);
+            InjectionState = "Initializing";
 
-        Running = MicrophoneReady || LoopbackReady;
-        _log?.Info($"Audio start: mic={MicrophoneState}; loopback={LoopbackState}; virtual={VirtualOutputState}");
+            StartMicrophone(microphoneId, generation);
+            StartLoopback(loopbackId, generation);
+            StartVirtualOutput(virtualMixOutputId, loopbackId, generation);
+
+            if (VirtualOutputReady)
+            {
+                _pump = new System.Threading.Timer(_ => Pump(micGain, systemGain, generation), null, 0, 10);
+                InjectionState = "READY: virtual cable receives the mixed stream; select its paired microphone in Qwen";
+            }
+            else if (string.IsNullOrWhiteSpace(InjectionState))
+            {
+                InjectionState = "Unavailable: virtual mix output is not configured";
+            }
+
+            Running = MicrophoneReady || LoopbackReady || VirtualOutputReady;
+            _log?.Info($"Audio start: mic={MicrophoneState}; loopback={LoopbackState}; virtual={VirtualOutputState}; running={Running}");
+        }
     }
 
-    private void StartMicrophone(string? id)
+    private void StartMicrophone(string? id, int generation)
     {
         try
         {
@@ -249,18 +258,22 @@ public sealed class MixedAudioSession : IDisposable
                 return;
             }
 
-            _mic = new WasapiCapture(device);
-            _mic.DataAvailable += (_, e) =>
+            var capture = new WasapiCapture(device);
+            var format = capture.WaveFormat;
+            capture.DataAvailable += (_, e) =>
             {
-                MicrophoneBytes += e.BytesRecorded;
-                Enqueue(_microphoneFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, _mic.WaveFormat));
+                if (generation != Volatile.Read(ref _generation)) return;
+                Interlocked.Add(ref _microphoneBytes, e.BytesRecorded);
+                Enqueue(_microphoneFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, format));
             };
-            _mic.RecordingStopped += (_, e) =>
+            capture.RecordingStopped += (_, e) =>
             {
+                if (generation != Volatile.Read(ref _generation)) return;
                 if (e.Exception is not null) MicrophoneState = "Stopped: " + e.Exception.GetType().Name;
                 MicrophoneReady = false;
             };
-            _mic.StartRecording();
+            _mic = capture;
+            capture.StartRecording();
             MicrophoneReady = true;
             MicrophoneState = "READY: " + device.FriendlyName;
         }
@@ -272,7 +285,7 @@ public sealed class MixedAudioSession : IDisposable
         }
     }
 
-    private void StartLoopback(string? id)
+    private void StartLoopback(string? id, int generation)
     {
         try
         {
@@ -283,18 +296,22 @@ public sealed class MixedAudioSession : IDisposable
                 return;
             }
 
-            _loopback = new WasapiLoopbackCapture(device);
-            _loopback.DataAvailable += (_, e) =>
+            var capture = new WasapiLoopbackCapture(device);
+            var format = capture.WaveFormat;
+            capture.DataAvailable += (_, e) =>
             {
-                LoopbackBytes += e.BytesRecorded;
-                Enqueue(_loopbackFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, _loopback.WaveFormat));
+                if (generation != Volatile.Read(ref _generation)) return;
+                Interlocked.Add(ref _loopbackBytes, e.BytesRecorded);
+                Enqueue(_loopbackFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, format));
             };
-            _loopback.RecordingStopped += (_, e) =>
+            capture.RecordingStopped += (_, e) =>
             {
+                if (generation != Volatile.Read(ref _generation)) return;
                 if (e.Exception is not null) LoopbackState = "Stopped: " + e.Exception.GetType().Name;
                 LoopbackReady = false;
             };
-            _loopback.StartRecording();
+            _loopback = capture;
+            capture.StartRecording();
             LoopbackReady = true;
             LoopbackState = "READY: " + device.FriendlyName;
         }
@@ -306,7 +323,7 @@ public sealed class MixedAudioSession : IDisposable
         }
     }
 
-    private void StartVirtualOutput(string? virtualId, string? loopbackId)
+    private void StartVirtualOutput(string? virtualId, string? loopbackId, int generation)
     {
         if (!_devices.ValidateVirtualMixOutput(virtualId, loopbackId, out var reason))
         {
@@ -325,20 +342,23 @@ public sealed class MixedAudioSession : IDisposable
                 return;
             }
 
-            _mixedProvider = new BufferedWaveProvider(
+            var provider = new BufferedWaveProvider(
                 WaveFormat.CreateIeeeFloatWaveFormat(AudioFormatConverter.TargetSampleRate, 1))
             {
                 BufferDuration = TimeSpan.FromMilliseconds(750),
                 DiscardOnBufferOverflow = true
             };
-            _virtualOutput = new WasapiOut(device, AudioClientShareMode.Shared, true, 40);
-            _virtualOutput.PlaybackStopped += (_, e) =>
+            var output = new WasapiOut(device, AudioClientShareMode.Shared, true, 40);
+            output.PlaybackStopped += (_, e) =>
             {
+                if (generation != Volatile.Read(ref _generation)) return;
                 if (e.Exception is not null) VirtualOutputState = "Stopped: " + e.Exception.GetType().Name;
                 VirtualOutputReady = false;
             };
-            _virtualOutput.Init(_mixedProvider);
-            _virtualOutput.Play();
+            output.Init(provider);
+            _mixedProvider = provider;
+            _virtualOutput = output;
+            output.Play();
             VirtualOutputReady = true;
             VirtualOutputState = "READY: " + device.FriendlyName;
         }
@@ -351,9 +371,12 @@ public sealed class MixedAudioSession : IDisposable
         }
     }
 
-    private void Pump(float micGain, float systemGain)
+    private void Pump(float micGain, float systemGain, int generation)
     {
-        if (_mixedProvider is null) return;
+        if (generation != Volatile.Read(ref _generation)) return;
+        var provider = _mixedProvider;
+        if (provider is null) return;
+
         TrimLatency(_microphoneFrames);
         TrimLatency(_loopbackFrames);
         var microphone = Dequeue(PumpFrames, _microphoneFrames);
@@ -363,26 +386,40 @@ public sealed class MixedAudioSession : IDisposable
         Buffer.BlockCopy(mixed, 0, bytes, 0, bytes.Length);
         try
         {
-            _mixedProvider.AddSamples(bytes, 0, bytes.Length);
-            MixedFrames += mixed.Length;
+            provider.AddSamples(bytes, 0, bytes.Length);
+            Interlocked.Add(ref _mixedFrames, mixed.Length);
         }
         catch (Exception ex)
         {
-            _log?.Error("Mixed audio provider failed: " + ex.GetType().Name);
+            if (generation == Volatile.Read(ref _generation))
+                _log?.Error("Mixed audio provider failed: " + ex.GetType().Name);
         }
     }
 
     public void Stop()
     {
-        _pump?.Dispose();
+        lock (_lifecycleGate)
+            StopCore();
+    }
+
+    private void StopCore()
+    {
+        ++_generation;
+        var pump = _pump;
+        var mic = _mic;
+        var loopback = _loopback;
+        var virtualOutput = _virtualOutput;
         _pump = null;
-        try { _mic?.StopRecording(); _mic?.Dispose(); } catch { }
-        try { _loopback?.StopRecording(); _loopback?.Dispose(); } catch { }
-        try { _virtualOutput?.Stop(); _virtualOutput?.Dispose(); } catch { }
         _mic = null;
         _loopback = null;
         _virtualOutput = null;
         _mixedProvider = null;
+
+        try { pump?.Dispose(); } catch { }
+        try { mic?.StopRecording(); mic?.Dispose(); } catch { }
+        try { loopback?.StopRecording(); loopback?.Dispose(); } catch { }
+        try { virtualOutput?.Stop(); virtualOutput?.Dispose(); } catch { }
+
         Running = false;
         MicrophoneReady = false;
         LoopbackReady = false;
