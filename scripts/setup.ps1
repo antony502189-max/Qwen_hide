@@ -1,9 +1,25 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $localDotnet = Join-Path $root '.tools\dotnet\dotnet.exe'
-if (-not (Test-Path $localDotnet)) { & (Join-Path $PSScriptRoot 'install-dotnet-sdk.ps1') }
-& $localDotnet --info
-New-Item -ItemType Directory -Force -Path (Join-Path $env:LOCALAPPDATA 'QwenWorkOverlay\WebViewProfile'),(Join-Path $env:LOCALAPPDATA 'QwenWorkOverlay\logs') | Out-Null
-$wv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\*' -ErrorAction SilentlyContinue | Where-Object { $_.name -match 'WebView2' }
-if (-not $wv) { Write-Warning 'WebView2 Runtime was not detected. Install Microsoft Edge WebView2 Evergreen Runtime before launching.' }
-& $localDotnet restore (Join-Path $root 'QwenWorkOverlay.sln')
+
+if (-not (Test-Path $localDotnet) -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    & (Join-Path $PSScriptRoot 'install-dotnet-sdk.ps1')
+}
+
+$dotnet = if (Test-Path $localDotnet) { $localDotnet } else { (Get-Command dotnet -ErrorAction Stop).Source }
+& $dotnet --info
+
+$localData = Join-Path $env:LOCALAPPDATA 'QwenDesktopController'
+New-Item -ItemType Directory -Force -Path $localData,(Join-Path $localData 'logs') | Out-Null
+
+Write-Host 'Checking for a running Qwen Desktop process...'
+$qwen = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match 'qwen' } | Select-Object -First 1
+if ($qwen) {
+    Write-Host "Found Qwen process: PID=$($qwen.Id) Name=$($qwen.ProcessName)"
+    try { Write-Host "Executable: $($qwen.Path)" } catch {}
+} else {
+    Write-Warning 'Qwen Desktop is not currently running. This is OK; the controller can attach after you open it.'
+}
+
+& $dotnet restore (Join-Path $root 'QwenWorkOverlay.sln')
+Write-Host 'Setup complete. This project no longer requires WebView2 because it controls the already-installed Qwen Desktop app.'
