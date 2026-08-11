@@ -187,4 +187,18 @@ public class CoreTests
         Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName("NVIDIA High Definition Audio (Virtual Display)"));
         Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName("Bluetooth Headset Loopback"));
     }
+
+    [Fact]
+    public void Voice_control_scoring_prefers_input_controls_and_penalizes_unrelated_audio_buttons()
+    {
+        var microphone = QwenVoiceAutomation.Score("Microphone voice input");
+        var exactMic = QwenVoiceAutomation.Score("mic");
+        var outputSettings = QwenVoiceAutomation.Score("Audio output device settings speaker volume");
+        var send = QwenVoiceAutomation.Score("Send voice message");
+
+        Assert.True(microphone >= 40);
+        Assert.True(exactMic >= 20);
+        Assert.True(outputSettings < microphone);
+        Assert.True(send < microphone);
+    }
 }
