@@ -67,15 +67,32 @@ jobs:
       - name: Publish win-x64
         run: dotnet publish src/QwenWorkOverlay/QwenWorkOverlay.csproj -c Release -r win-x64 --self-contained true -o dist
 
+      - name: Package runtime probe and guides
+        shell: pwsh
+        run: |
+          Copy-Item scripts\runtime-probe.ps1 dist\runtime-probe.ps1 -Force
+          Copy-Item README.md dist\README.md -Force
+          Copy-Item GUIDE_EN.md dist\GUIDE_EN.md -Force
+          Copy-Item GUIDE_RU.md dist\GUIDE_RU.md -Force
+          Copy-Item MANUAL_TEST_CHECKLIST_EN.md dist\MANUAL_TEST_CHECKLIST_EN.md -Force
+          Copy-Item RUN_ME_FIRST_RU.txt dist\RUN_ME_FIRST_RU.txt -Force
+
       - name: Verify release payload
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD 'dist\QwenDesktopController.exe'
-          if (-not (Test-Path $exe)) { throw "Release executable not found: $exe" }
-          $file = Get-Item $exe
-          if ($file.Length -lt 100KB) { throw "Release executable is unexpectedly small: $($file.Length) bytes" }
-          Get-FileHash $exe -Algorithm SHA256 | Format-List
-          Write-Host "Release bytes: $($file.Length)"
+          $required = @(
+            'dist\QwenDesktopController.exe',
+            'dist\runtime-probe.ps1',
+            'dist\GUIDE_RU.md',
+            'dist\RUN_ME_FIRST_RU.txt'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) { throw "Required release file not found: $path" }
+          }
+          $exe = Get-Item 'dist\QwenDesktopController.exe'
+          if ($exe.Length -lt 100KB) { throw "Release executable is unexpectedly small: $($exe.Length) bytes" }
+          Get-FileHash $exe.FullName -Algorithm SHA256 | Format-List
+          Write-Host "Release bytes: $($exe.Length)"
 
       - name: Upload test results
         if: always()
