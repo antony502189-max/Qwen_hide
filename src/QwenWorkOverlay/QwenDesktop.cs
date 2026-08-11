@@ -226,8 +226,13 @@ public sealed class QwenWindowController : IDisposable
             return false;
         }
 
-        _recovery.Save(target, _originalExStyle, _originalTopMost, _originalVisible,
-            _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey);
+        if (!_recovery.Save(target, _originalExStyle, _originalTopMost, _originalVisible,
+                _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey))
+        {
+            _log.Error("Verified recovery journal is unavailable; refusing to mutate the native Qwen window");
+            _target = null;
+            return false;
+        }
 
         _hidden = !_originalVisible;
         if (!SetOpacity(opacity) || !SetTopMost(topMost))
