@@ -10,21 +10,27 @@ It does **not** embed `qwen.ai`, does not create a second Qwen session, and does
 - always-on-top toggle;
 - reversible mouse click-through mode;
 - global hide/show hotkey;
+- emergency `Ctrl+Alt+Esc` restore-and-exit path;
+- crash-recovery journal for the original native Qwen window style;
+- automatic re-attach after Qwen restarts;
+- single-controller-instance guard;
 - active-window and monitor screenshots directly to the Windows Clipboard;
+- Chromium/Electron black-frame detection with screen-copy fallback;
 - Clipboard → existing Qwen paste helper;
 - shared-mode physical microphone capture;
 - WASAPI loopback capture of Windows playback;
 - optional mic + system-audio mix sent only to a recognized virtual cable;
+- bounded audio queues, format conversion/resampling and callback-generation guards;
 - best-effort automation of Qwen's existing voice button while Right Ctrl is held;
-- system-tray controller and diagnostics;
-- restoration of Qwen window styles when the controller exits;
+- system-tray controller and detailed diagnostics;
+- verified restoration of Qwen window styles when the controller exits;
 - no automatic changes to Windows default or communications audio devices.
 
 ## Important capture-privacy limitation
 
-The installed Qwen window belongs to the Qwen process, not this controller. The safe native mode therefore does **not** claim `WDA_EXCLUDEFROMCAPTURE` support for the Qwen window. The controller deliberately avoids DLL injection, binary patching or replacing Qwen with an embedded web client just to fake this checkbox.
+The installed Qwen window belongs to the Qwen process, not this controller. Safe native mode therefore does **not** claim `WDA_EXCLUDEFROMCAPTURE` support for the Qwen window. The controller deliberately avoids DLL injection, binary patching or replacing Qwen with an embedded web client just to fake this checkbox.
 
-If you need privacy during a work share, prefer sharing a specific application/window rather than the whole desktop. Full-screen capture behavior must be tested with the exact conferencing software you use.
+If you need privacy during a work share, prefer sharing a specific application/window rather than the whole desktop whenever the conferencing software supports it. Full-screen capture behavior must be tested with the exact conferencing software you use.
 
 ## Quick start
 
@@ -37,4 +43,31 @@ cd E:\qwen_hide
 
 Open the normal Qwen Desktop app if it is not already running. The controller will attach to its native top-level window and can then minimize itself to the system tray.
 
-See [GUIDE_EN.md](GUIDE_EN.md) and [MANUAL_TEST_CHECKLIST_EN.md](MANUAL_TEST_CHECKLIST_EN.md).
+For exact target-machine diagnostics with Qwen open:
+
+```powershell
+.\scripts\runtime-probe.ps1
+```
+
+This writes `artifacts\runtime-probe.json` without collecting chat text, Clipboard contents, credentials or audio.
+
+## Hotkeys
+
+| Hotkey | Action |
+|---|---|
+| `Ctrl+Alt+Q` | Hide/show native Qwen |
+| `Ctrl+Alt+X` | Click-through ON/OFF |
+| `Ctrl+Alt+T` | TopMost ON/OFF |
+| `Ctrl+Alt+Up/Down` | Opacity ±5% |
+| `Ctrl+Alt+V` | Paste Clipboard into Qwen |
+| `Ctrl+Alt+D` | Diagnostics |
+| `F6` | Last non-Qwen work window → Clipboard |
+| `Shift+F6` | Current monitor → Clipboard |
+| hold `Right Ctrl` | Run configured Qwen-only audio mix |
+| `Ctrl+Alt+Esc` | Emergency restore Qwen and exit controller |
+
+## Quality gates
+
+Windows CI rejects any reintroduced WebView2 Qwen wrapper, then performs restore, Release build, automated tests, self-contained win-x64 publish, release-payload verification, SHA-256 generation, and artifact upload. Automated tests include a real Win32 HWND recovery test in addition to pure mixer/style/state tests.
+
+See [GUIDE_EN.md](GUIDE_EN.md), [GUIDE_RU.md](GUIDE_RU.md) and [MANUAL_TEST_CHECKLIST_EN.md](MANUAL_TEST_CHECKLIST_EN.md).
