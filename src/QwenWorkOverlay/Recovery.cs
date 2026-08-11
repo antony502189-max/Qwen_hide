@@ -57,8 +57,55 @@ public sealed class WindowRecoveryService
 
     public void Clear()
     {
-        try { if (File.Exists(_path)) File.Delete(_path); }
-        catch (Exception ex) { _log.Error("Could not clear Qwen window recovery snapshot: " + ex.GetType().Name); }
+        if (!File.Exists(_path)) return;
+        try
+        {
+            var snapshot = TryReadSnapshot();
+            if (snapshot is null)
+            {
+                DeleteJournal();
+                return;
+            }
+
+            var hwnd = new IntPtr(snapshot.Hwnd);
+            if (!Native.IsWindow(hwnd))
+            {
+                DeleteJournal();
+                return;
+            }
+
+            Native.GetWindowThreadProcessId(hwnd, out var ownerPid);
+            if (ownerPid != snapshot.ProcessId)
+            {
+                DeleteJournal();
+                return;
+            }
+
+            // If the original process is still alive, only delete the journal when the externally visible
+            // state really matches the pre-controller snapshot. Otherwise keep it for the next recovery attempt.
+            var currentStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
+            var styleMatches = currentStyle == snapshot.OriginalExStyle;
+            var topMostMatches = ((currentStyle & Native.WS_EX_TOPMOST) != 0) == snapshot.OriginalTopMost;
+            var visibleMatches = Native.IsWindowVisible(hwnd) == snapshot.OriginalVisible;
+            var layeredMatches = true;
+            if (snapshot.OriginalLayered && Native.GetLayeredWindowAttributes(hwnd, out var key, out var alpha, out var flags))
+            {
+                layeredMatches = key == snapshot.OriginalColorKey && alpha == snapshot.OriginalAlpha && flags == snapshot.OriginalLayerFlags;
+            }
+
+            if (styleMatches && topMostMatches && visibleMatches && layeredMatches)
+            {
+                DeleteJournal();
+            }
+            else
+            {
+                _log.Error($"Keeping Qwen recovery journal because restoration verification failed: style={styleMatches}, topmost={topMostMatches}, visible={visibleMatches}, layered={layeredMatches}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Could not verify/clear Qwen window recovery snapshot: " + ex.GetType().Name);
+        }
     }
 
     public bool TryRecoverStaleState()
@@ -66,26 +113,24 @@ public sealed class WindowRecoveryService
         if (!File.Exists(_path)) return false;
         try
         {
-            var snapshot = JsonSerializer.Deserialize<WindowRecoverySnapshot>(File.ReadAllText(_path));
+            var snapshot = TryReadSnapshot();
             if (snapshot is null)
             {
-                Clear();
+                DeleteJournal();
                 return false;
             }
 
             var hwnd = new IntPtr(snapshot.Hwnd);
             if (!Native.IsWindow(hwnd))
             {
-                // The original window no longer exists, so there is nothing left to recover.
-                Clear();
+                DeleteJournal();
                 return false;
             }
 
             Native.GetWindowThreadProcessId(hwnd, out var ownerPid);
             if (ownerPid != snapshot.ProcessId)
             {
-                // HWND was reused by another process: never touch it.
-                Clear();
+                DeleteJournal();
                 return false;
             }
 
@@ -93,8 +138,7 @@ public sealed class WindowRecoveryService
             var startTicks = process.StartTime.ToUniversalTime().Ticks;
             if (snapshot.ProcessStartUtcTicks != 0 && startTicks != snapshot.ProcessStartUtcTicks)
             {
-                // PID was reused: never apply stale styles to the new process.
-                Clear();
+                DeleteJournal();
                 return false;
             }
 
@@ -111,7 +155,6 @@ public sealed class WindowRecoveryService
                 0, 0, 0, 0,
                 Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
 
-            // Visibility restoration is best-effort: ShowWindowAsync's return value reflects prior state, not success.
             Native.ShowWindowAsync(hwnd, snapshot.OriginalVisible ? Native.SW_SHOW : Native.SW_HIDE);
 
             if (!styleOk || !layeredOk || !topMostOk)
@@ -122,17 +165,16 @@ public sealed class WindowRecoveryService
 
             _log.Info($"Recovered native Qwen window state (PID {snapshot.ProcessId}, HWND 0x{snapshot.Hwnd:X})");
             Clear();
-            return true;
+            return !HasPendingSnapshot;
         }
         catch (ArgumentException)
         {
-            // Process exited between validation steps.
-            Clear();
+            DeleteJournal();
             return false;
         }
         catch (InvalidOperationException)
         {
-            Clear();
+            DeleteJournal();
             return false;
         }
         catch (Exception ex)
@@ -140,5 +182,17 @@ public sealed class WindowRecoveryService
             _log.Error("Qwen window recovery failed safely and will be retried: " + ex.GetType().Name);
             return false;
         }
+    }
+
+    private WindowRecoverySnapshot? TryReadSnapshot()
+    {
+        try { return JsonSerializer.Deserialize<WindowRecoverySnapshot>(File.ReadAllText(_path)); }
+        catch { return null; }
+    }
+
+    private void DeleteJournal()
+    {
+        try { if (File.Exists(_path)) File.Delete(_path); }
+        catch (Exception ex) { _log.Error("Could not delete Qwen recovery journal: " + ex.GetType().Name); }
     }
 }
