@@ -78,7 +78,7 @@ public partial class MainWindow : Window
         menu.Items.Add("Toggle click-through", null, (_, _) => Dispatcher.Invoke(ToggleClickThrough));
         menu.Items.Add("Diagnostics", null, (_, _) => Dispatcher.Invoke(ShowDiagnostics));
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Exit controller", null, (_, _) => Dispatcher.Invoke(ExitApplication));
+        menu.Items.Add("Exit controller (restore Qwen)", null, (_, _) => Dispatcher.Invoke(ExitApplication));
 
         _tray = new Forms.NotifyIcon
         {
@@ -98,7 +98,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        // If Qwen was restarted, clear the stale handle/recovery record before acquiring its new HWND.
         if (_qwen.Target is not null)
             _qwen.Detach(restore: false);
 
@@ -195,6 +194,10 @@ public partial class MainWindow : Window
                     Toast(ok ? "Monitor screenshot copied" : "Screenshot failed");
                     break;
                 }
+                case 11:
+                    _log.Info("Emergency restore-and-exit hotkey invoked");
+                    ExitApplication();
+                    return;
             }
             UpdateStatus();
         });
@@ -264,10 +267,7 @@ public partial class MainWindow : Window
             _settings.Save();
             Toast($"Qwen TopMost {(requested ? "ON" : "OFF")}");
         }
-        else
-        {
-            Toast("TopMost change failed");
-        }
+        else Toast("TopMost change failed");
         UpdateStatus();
     }
 
@@ -287,10 +287,7 @@ public partial class MainWindow : Window
             _settings.Save();
             Toast($"Qwen opacity {Math.Round(value * 100)}%");
         }
-        else
-        {
-            Toast("Opacity change failed");
-        }
+        else Toast("Opacity change failed");
         UpdateStatus();
     }
 
@@ -302,7 +299,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Allow physical Ctrl/Alt keys from the global hotkey to be released before synthesizing Ctrl+V.
         await Task.Delay(140);
         try
         {
@@ -386,7 +382,8 @@ public partial class MainWindow : Window
             $"Default input before: {_deviceGuard.InputBefore}\n" +
             $"Default input current: {currentDefaultInput}\n" +
             $"Default communications before: {_deviceGuard.CommunicationsBefore}\n" +
-            $"Default communications current: {currentCommunicationsInput}";
+            $"Default communications current: {currentCommunicationsInput}\n" +
+            $"Log: {_log.LogPath}";
 
         MessageBox.Show(this, text, "Qwen Desktop Controller Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information);
     }
