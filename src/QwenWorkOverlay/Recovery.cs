@@ -21,9 +21,17 @@ public sealed class WindowRecoverySnapshot
 public sealed class WindowRecoveryService
 {
     private readonly AppLogger _log;
-    private readonly string _path = Path.Combine(SettingsService.Root, "window-recovery.json");
+    private readonly string _path;
 
-    public WindowRecoveryService(AppLogger log) => _log = log;
+    public WindowRecoveryService(AppLogger log, string? journalPath = null)
+    {
+        _log = log;
+        _path = string.IsNullOrWhiteSpace(journalPath)
+            ? Path.Combine(SettingsService.Root, "window-recovery.json")
+            : Path.GetFullPath(journalPath);
+    }
+
+    public string JournalPath => _path;
     public bool HasPendingSnapshot => File.Exists(_path);
 
     public void Save(QwenTarget target, IntPtr originalExStyle, bool originalTopMost, bool originalVisible,
@@ -44,7 +52,8 @@ public sealed class WindowRecoveryService
                 OriginalLayerFlags = originalLayerFlags,
                 OriginalColorKey = originalColorKey
             };
-            Directory.CreateDirectory(SettingsService.Root);
+            var directory = Path.GetDirectoryName(_path);
+            if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
             var temp = _path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(temp, _path, true);
