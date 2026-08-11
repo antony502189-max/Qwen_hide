@@ -23,6 +23,31 @@ public class CoreTests
     }
 
     [Fact]
+    public void Recovery_snapshot_round_trips_without_losing_native_style_bits()
+    {
+        var snapshot = new WindowRecoverySnapshot
+        {
+            ProcessId = 123,
+            ProcessStartUtcTicks = 987654321,
+            Hwnd = 0x12345678,
+            OriginalExStyle = 0x80028,
+            OriginalTopMost = true,
+            OriginalVisible = true,
+            OriginalLayered = true,
+            OriginalAlpha = 217,
+            OriginalLayerFlags = 2,
+            OriginalColorKey = 42
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(snapshot);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<WindowRecoverySnapshot>(json)!;
+        Assert.Equal(snapshot.ProcessId, restored.ProcessId);
+        Assert.Equal(snapshot.ProcessStartUtcTicks, restored.ProcessStartUtcTicks);
+        Assert.Equal(snapshot.Hwnd, restored.Hwnd);
+        Assert.Equal(snapshot.OriginalExStyle, restored.OriginalExStyle);
+        Assert.Equal(snapshot.OriginalAlpha, restored.OriginalAlpha);
+    }
+
+    [Fact]
     public void Mixer_limits_clipping()
     {
         var x = AudioMixer.Mix([1f, 1f], [1f, -3f], 1, 1);
@@ -38,6 +63,13 @@ public class CoreTests
     }
 
     [Fact]
+    public void Mixer_clamps_negative_gain_to_zero()
+    {
+        var x = AudioMixer.Mix([.8f], [.4f], -2f, 0f);
+        Assert.Equal(0f, x[0]);
+    }
+
+    [Fact]
     public void Window_state_returns_to_visible_desktop()
     {
         var screen = System.Windows.Forms.Screen.PrimaryScreen;
@@ -45,6 +77,24 @@ public class CoreTests
         var p = WindowStateNormalizer.Normalize(500000, 500000, 900, 600, [screen!]);
         Assert.True(p.X < screen!.WorkingArea.Right);
         Assert.True(p.Y < screen.WorkingArea.Bottom);
+    }
+
+    [Fact]
+    public void Click_through_forces_layered_window_even_at_full_opacity()
+    {
+        const long layered = 0x00080000L;
+        const long transparent = 0x00000020L;
+        var style = WindowStylePolicy.ComputeExtendedStyle(0, 1.0, true);
+        Assert.NotEqual(0, style & layered);
+        Assert.NotEqual(0, style & transparent);
+    }
+
+    [Fact]
+    public void Interactive_full_opacity_preserves_original_unrelated_style_bits()
+    {
+        const long original = 0x00000100L;
+        var style = WindowStylePolicy.ComputeExtendedStyle(original, 1.0, false);
+        Assert.Equal(original, style);
     }
 
     [Fact]
@@ -64,6 +114,40 @@ public class CoreTests
         var sample = AudioFormatConverter.ToMonoFloat48k(bytes, bytes.Length, format);
         Assert.Single(sample);
         Assert.InRange(sample[0], -.01f, .01f);
+    }
+
+    [Fact]
+    public void Audio_conversion_uses_linear_interpolation_when_resampling()
+    {
+        var format = new NAudio.Wave.WaveFormat(24000, 16, 1);
+        var bytes = new byte[4];
+        BitConverter.GetBytes((short)0).CopyTo(bytes, 0);
+        BitConverter.GetBytes(short.MaxValue).CopyTo(bytes, 2);
+        var samples = AudioFormatConverter.ToMonoFloat48k(bytes, bytes.Length, format);
+        Assert.Equal(4, samples.Length);
+        Assert.InRange(samples[0], -.001f, .001f);
+        Assert.InRange(samples[1], .49f, .51f);
+        Assert.InRange(samples[2], .99f, 1f);
+    }
+
+    [Fact]
+    public void Audio_conversion_handles_pcm32_without_treating_it_as_float()
+    {
+        var format = new NAudio.Wave.WaveFormat(48000, 32, 1);
+        var bytes = BitConverter.GetBytes(int.MaxValue);
+        var samples = AudioFormatConverter.ToMonoFloat48k(bytes, bytes.Length, format);
+        Assert.Single(samples);
+        Assert.InRange(samples[0], .99f, 1f);
+    }
+
+    [Fact]
+    public void Audio_conversion_handles_pcm24()
+    {
+        var format = new NAudio.Wave.WaveFormat(48000, 24, 1);
+        var bytes = new byte[] { 0xFF, 0xFF, 0x7F };
+        var samples = AudioFormatConverter.ToMonoFloat48k(bytes, bytes.Length, format);
+        Assert.Single(samples);
+        Assert.InRange(samples[0], .99f, 1f);
     }
 
     [Fact]
@@ -91,9 +175,11 @@ public class CoreTests
     }
 
     [Fact]
-    public void Virtual_mix_policy_rejects_physical_speakers()
+    public void Virtual_mix_policy_rejects_physical_speakers_and_accepts_known_virtual_devices()
     {
         Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("CABLE Input (VB-Audio Virtual Cable)"));
+        Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("VoiceMeeter Input"));
+        Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("VB-Audio Point"));
         Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName("Speakers (Realtek(R) Audio)"));
     }
 }
