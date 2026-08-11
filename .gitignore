@@ -5,6 +5,7 @@ obj/
 dist/
 publish/
 logs/
+artifacts/
 *.user
 *.suo
 *.cache
