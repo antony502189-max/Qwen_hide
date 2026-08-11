@@ -4,7 +4,14 @@ using System.Runtime.InteropServices;
 
 namespace QwenWorkOverlay;
 
-public sealed record QwenTarget(int ProcessId, IntPtr Hwnd, string ProcessName, string? ExecutablePath, string WindowTitle, string WindowClass)
+public sealed record QwenTarget(
+    int ProcessId,
+    IntPtr Hwnd,
+    string ProcessName,
+    string? ExecutablePath,
+    string WindowTitle,
+    string WindowClass,
+    long ProcessStartUtcTicks)
 {
     public string Summary => $"{ProcessName} (PID {ProcessId}, HWND 0x{Hwnd.ToInt64():X})";
 }
@@ -24,9 +31,12 @@ public sealed class QwenProcessLocator
             {
                 if (process.Id == currentPid) continue;
                 var processName = process.ProcessName;
-                var nameLooksRight = processName.Contains("qwen", StringComparison.OrdinalIgnoreCase);
+                var executable = TryGetExecutablePath(process);
+                var nameLooksRight = processName.Contains("qwen", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(Path.GetFileName(executable), "Qwen.exe", StringComparison.OrdinalIgnoreCase);
                 if (!nameLooksRight) continue;
 
+                var startTicks = TryGetProcessStartTicks(process);
                 foreach (var hwnd in Native.EnumerateTopLevelWindows((uint)process.Id))
                 {
                     if (!Native.IsWindow(hwnd) || !Native.IsWindowVisible(hwnd)) continue;
@@ -34,7 +44,7 @@ public sealed class QwenProcessLocator
                     if (rect.Right - rect.Left < 320 || rect.Bottom - rect.Top < 200) continue;
                     var title = Native.GetWindowText(hwnd);
                     var windowClass = Native.GetWindowClass(hwnd);
-                    candidates.Add(new QwenTarget(process.Id, hwnd, processName, TryGetExecutablePath(process), title, windowClass));
+                    candidates.Add(new QwenTarget(process.Id, hwnd, processName, executable, title, windowClass, startTicks));
                 }
             }
             catch
@@ -113,7 +123,11 @@ public sealed class QwenProcessLocator
         if (!IsExecutable(executablePath)) return false;
         try
         {
-            Process.Start(new ProcessStartInfo(executablePath) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(executablePath)! });
+            Process.Start(new ProcessStartInfo(executablePath)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(executablePath)!
+            });
             _log.Info("Launched installed Qwen desktop: " + executablePath);
             return true;
         }
@@ -129,7 +143,7 @@ public sealed class QwenProcessLocator
         var score = 0;
         if (target.ProcessName.Equals("Qwen", StringComparison.OrdinalIgnoreCase)) score += 100;
         if (target.WindowTitle.Contains("Qwen", StringComparison.OrdinalIgnoreCase)) score += 50;
-        if (Path.GetFileName(target.ExecutablePath).Equals("Qwen.exe", StringComparison.OrdinalIgnoreCase)) score += 25;
+        if (string.Equals(Path.GetFileName(target.ExecutablePath), "Qwen.exe", StringComparison.OrdinalIgnoreCase)) score += 25;
         return score;
     }
 
@@ -139,7 +153,16 @@ public sealed class QwenProcessLocator
         catch { return null; }
     }
 
-    private static bool IsExecutable(string? path) => !string.IsNullOrWhiteSpace(path) && File.Exists(path) && Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase);
+    private static long TryGetProcessStartTicks(Process process)
+    {
+        try { return process.StartTime.ToUniversalTime().Ticks; }
+        catch { return 0; }
+    }
+
+    private static bool IsExecutable(string? path) =>
+        !string.IsNullOrWhiteSpace(path) && File.Exists(path) &&
+        Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase);
+
     private static void AddCandidate(List<string> list, params string[] parts)
     {
         if (parts.Any(string.IsNullOrWhiteSpace)) return;
@@ -150,6 +173,7 @@ public sealed class QwenProcessLocator
 public sealed class QwenWindowController : IDisposable
 {
     private readonly AppLogger _log;
+    private readonly WindowRecoveryService _recovery;
     private QwenTarget? _target;
     private nint _originalExStyle;
     private bool _originalTopMost;
@@ -163,13 +187,20 @@ public sealed class QwenWindowController : IDisposable
     private bool _topMost;
     private bool _hidden;
 
-    public QwenWindowController(AppLogger log) => _log = log;
+    public QwenWindowController(AppLogger log)
+    {
+        _log = log;
+        _recovery = new WindowRecoveryService(log);
+    }
+
     public QwenTarget? Target => _target;
     public bool IsAttached => _target is not null && Native.IsWindow(_target.Hwnd);
     public bool ClickThrough => _clickThrough;
     public double Opacity => _opacity;
     public bool TopMost => _topMost;
     public bool Hidden => _hidden;
+
+    public bool RecoverStaleState() => _recovery.TryRecoverStaleState();
 
     public bool Attach(QwenTarget target, double opacity, bool topMost)
     {
@@ -182,6 +213,9 @@ public sealed class QwenWindowController : IDisposable
         _originalTopMost = (_originalExStyle.ToInt64() & Native.WS_EX_TOPMOST) != 0;
         _originalVisible = Native.IsWindowVisible(target.Hwnd);
         _originalLayered = (_originalExStyle.ToInt64() & Native.WS_EX_LAYERED) != 0;
+        _originalAlpha = 255;
+        _originalLayerFlags = Native.LWA_ALPHA;
+        _originalColorKey = 0;
         if (_originalLayered && Native.GetLayeredWindowAttributes(target.Hwnd, out var key, out var alpha, out var flags))
         {
             _originalColorKey = key;
@@ -189,9 +223,17 @@ public sealed class QwenWindowController : IDisposable
             _originalLayerFlags = flags;
         }
 
+        _recovery.Save(target, _originalExStyle, _originalTopMost, _originalVisible,
+            _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey);
+
         _hidden = !_originalVisible;
-        SetOpacity(opacity);
-        SetTopMost(topMost);
+        if (!SetOpacity(opacity) || !SetTopMost(topMost))
+        {
+            _log.Error("Could not apply native Qwen window settings; restoring original state");
+            Detach(restore: true);
+            return false;
+        }
+
         _log.Info("Attached to native Qwen desktop: " + target.Summary);
         return true;
     }
@@ -215,18 +257,23 @@ public sealed class QwenWindowController : IDisposable
     {
         if (!IsAttached) return false;
         _topMost = enabled;
-        return Native.SetWindowPos(
+        var ok = Native.SetWindowPos(
             _target!.Hwnd,
             enabled ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
             0, 0, 0, 0,
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+        if (!ok) _log.Error("SetWindowPos TopMost failed; win32=" + Marshal.GetLastWin32Error());
+        return ok;
     }
 
     public bool ToggleVisibility()
     {
         if (!IsAttached) return false;
-        _hidden = !_hidden;
-        return Native.ShowWindowAsync(_target!.Hwnd, _hidden ? Native.SW_HIDE : Native.SW_SHOW);
+        var currentlyVisible = Native.IsWindowVisible(_target!.Hwnd);
+        _hidden = currentlyVisible;
+        var ok = Native.ShowWindowAsync(_target.Hwnd, currentlyVisible ? Native.SW_HIDE : Native.SW_SHOW);
+        if (!ok) _log.Error("ShowWindowAsync visibility toggle failed; win32=" + Marshal.GetLastWin32Error());
+        return ok;
     }
 
     public bool ShowAndActivate()
@@ -235,22 +282,27 @@ public sealed class QwenWindowController : IDisposable
         _hidden = false;
         Native.ShowWindowAsync(_target!.Hwnd, Native.SW_RESTORE);
         Native.ShowWindowAsync(_target.Hwnd, Native.SW_SHOW);
-        return Native.SetForegroundWindow(_target.Hwnd);
+        var ok = Native.SetForegroundWindow(_target.Hwnd);
+        if (!ok) _log.Error("SetForegroundWindow failed for native Qwen");
+        return ok;
     }
 
     private bool ApplyStyles()
     {
         if (!IsAttached) return false;
         var hwnd = _target!.Hwnd;
-        var desired = _originalExStyle.ToInt64();
-        if (_opacity < .999) desired |= Native.WS_EX_LAYERED;
-        if (_clickThrough) desired |= Native.WS_EX_TRANSPARENT;
-        else if ((_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) == 0) desired &= ~Native.WS_EX_TRANSPARENT;
+        var original = _originalExStyle.ToInt64();
+        var desired = original;
 
-        var written = Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(desired));
-        if (written == IntPtr.Zero && Marshal.GetLastWin32Error() != 0)
+        // WS_EX_TRANSPARENT provides reliable hit-test pass-through for a layered top-level window.
+        if (_opacity < .999 || _clickThrough) desired |= Native.WS_EX_LAYERED;
+        if (_clickThrough) desired |= Native.WS_EX_TRANSPARENT;
+        else if ((original & Native.WS_EX_TRANSPARENT) == 0) desired &= ~Native.WS_EX_TRANSPARENT;
+
+        Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(desired));
+        if (Marshal.GetLastWin32Error() != 0)
         {
-            _log.Error("SetWindowLongPtr failed for native Qwen HWND");
+            _log.Error("SetWindowLongPtr failed for native Qwen HWND; win32=" + Marshal.GetLastWin32Error());
             return false;
         }
 
@@ -258,7 +310,7 @@ public sealed class QwenWindowController : IDisposable
         {
             if (!Native.SetLayeredWindowAttributes(hwnd, 0, (byte)Math.Round(_opacity * 255), Native.LWA_ALPHA))
             {
-                _log.Error("SetLayeredWindowAttributes failed for native Qwen HWND");
+                _log.Error("SetLayeredWindowAttributes failed for native Qwen HWND; win32=" + Marshal.GetLastWin32Error());
                 return false;
             }
         }
@@ -266,35 +318,55 @@ public sealed class QwenWindowController : IDisposable
         {
             Native.SetLayeredWindowAttributes(hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags);
         }
+        else if (_clickThrough)
+        {
+            if (!Native.SetLayeredWindowAttributes(hwnd, 0, 255, Native.LWA_ALPHA))
+            {
+                _log.Error("Could not enable layered click-through for native Qwen; win32=" + Marshal.GetLastWin32Error());
+                return false;
+            }
+        }
         else
         {
             var withoutLayer = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64() & ~Native.WS_EX_LAYERED;
             Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(withoutLayer));
         }
 
-        Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+        var frameOk = Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
-        return true;
+        if (!frameOk) _log.Error("Could not refresh Qwen window frame after style change; win32=" + Marshal.GetLastWin32Error());
+        return frameOk;
     }
 
     public void Detach(bool restore)
     {
         var target = _target;
         _target = null;
-        if (target is null || !Native.IsWindow(target.Hwnd)) return;
-        if (restore)
+        try
         {
-            Native.SetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE, _originalExStyle);
-            if (_originalLayered)
-                Native.SetLayeredWindowAttributes(target.Hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags);
-            Native.SetWindowPos(target.Hwnd, _originalTopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST, 0, 0, 0, 0,
-                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
-            if (_originalVisible) Native.ShowWindowAsync(target.Hwnd, Native.SW_SHOW);
-            else Native.ShowWindowAsync(target.Hwnd, Native.SW_HIDE);
+            if (target is not null && Native.IsWindow(target.Hwnd) && restore)
+            {
+                Native.SetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE, _originalExStyle);
+                if (_originalLayered)
+                    Native.SetLayeredWindowAttributes(target.Hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags);
+
+                Native.SetWindowPos(target.Hwnd,
+                    _originalTopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
+                    0, 0, 0, 0,
+                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
+
+                Native.ShowWindowAsync(target.Hwnd, _originalVisible ? Native.SW_SHOW : Native.SW_HIDE);
+            }
         }
-        _clickThrough = false;
-        _hidden = false;
-        _log.Info("Detached from native Qwen desktop");
+        finally
+        {
+            _recovery.Clear();
+            _clickThrough = false;
+            _hidden = false;
+            _opacity = 1;
+            _topMost = false;
+            if (target is not null) _log.Info("Detached from native Qwen desktop");
+        }
     }
 
     public void Dispose() => Detach(restore: true);
