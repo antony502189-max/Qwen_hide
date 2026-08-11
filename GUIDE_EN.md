@@ -1,55 +1,331 @@
-# Qwen Work Overlay guide
+# Qwen Desktop Controller — User Guide
 
-## Installation and startup
+## 1. What this project is
 
-Install the Microsoft Edge WebView2 Evergreen Runtime and .NET is bundled in the release. Build with `scripts\build.ps1`; the executable is `dist\QwenWorkOverlay.exe`. On first run, sign in to qwen.ai inside the embedded browser. Cookies, IndexedDB, LocalStorage, and Qwen preferences remain in `%LOCALAPPDATA%\QwenWorkOverlay\WebViewProfile`. The app never stores passwords or tokens itself.
+Qwen Desktop Controller is a Windows companion process for the **Qwen Desktop application that is already installed on your PC**.
 
-## Window controls
+It does not host `qwen.ai` in WebView2 and it does not create a second Qwen session. The normal Qwen Desktop window remains the window you use for chats, model selection, files, images, code and Qwen's built-in voice feature.
 
-Drag the thin title bar; resize from any edge/corner. The default opacity is 85%, topmost is on, and both are restored on restart. The settings button selects microphone/playback endpoints and gains, opacity, topmost, capture protection, and Right Ctrl behavior.
+The controller only adds Windows-level conveniences around that existing window.
+
+## 2. Current feature set
+
+- automatically discovers a running Qwen Desktop process/window;
+- can launch an existing `Qwen.exe` when its path is known or auto-detected;
+- applies adjustable whole-window opacity to the real Qwen window;
+- toggles TopMost on the real Qwen window;
+- toggles reversible mouse click-through on the real Qwen window;
+- hides/shows Qwen without terminating it;
+- captures the last non-Qwen work window directly to the Clipboard with `F6`;
+- captures the current monitor to the Clipboard with `Shift+F6`;
+- pastes the current Clipboard into the real Qwen app with `Ctrl+Alt+V`;
+- captures your physical microphone in shared mode;
+- captures Windows playback using WASAPI loopback;
+- mixes microphone + system audio in memory;
+- can send the mixed signal to a recognized virtual-cable render endpoint only;
+- never intentionally changes Windows default or communications audio endpoints;
+- can try to invoke Qwen's **existing** voice button through Windows UI Automation while Right Ctrl is held;
+- restores the Qwen window's original extended styles / TopMost state when the controller exits;
+- lives in the Windows system tray during normal use.
+
+## 3. Important limitation: capture privacy
+
+The native Qwen window belongs to the Qwen process. `SetWindowDisplayAffinity` is not safely applicable to another process's top-level window from this controller.
+
+For that reason the controller intentionally reports:
+
+`Capture privacy: UNSUPPORTED in safe native-Qwen mode`
+
+It does not patch Qwen, inject a DLL into it, or replace Qwen with a browser wrapper just to make this status appear green.
+
+For work calls, the safest practical option is to share a **specific application/window** rather than your entire desktop whenever the conferencing software supports it. Test the exact screen-sharing mode you intend to use before relying on it.
+
+## 4. Requirements
+
+- Windows 10 or Windows 11 x64;
+- Qwen Desktop already installed;
+- .NET 8 SDK for building from source;
+- no WebView2 requirement for this controller;
+- optional virtual audio cable only if you want Qwen to receive microphone + system audio as one input.
+
+## 5. Initial setup
+
+Open PowerShell in the repository:
+
+```powershell
+cd E:\qwen_hide
+.\scripts\setup.ps1
+```
+
+Then build:
+
+```powershell
+.\scripts\build.ps1
+```
+
+The published executable is expected at:
+
+```text
+dist\QwenDesktopController.exe
+```
+
+Run it:
+
+```powershell
+.\dist\QwenDesktopController.exe
+```
+
+## 6. Attaching to your existing Qwen
+
+The controller first searches running processes whose executable/process identity looks like Qwen and then finds the visible top-level Qwen window.
+
+Recommended first test:
+
+1. Open Qwen Desktop normally.
+2. Confirm your normal chats/account/model are visible.
+3. Launch `QwenDesktopController.exe`.
+4. Open the controller from the tray if it hides automatically.
+5. The status should say **Attached to the installed Qwen Desktop**.
+6. Diagnostics should show Qwen's PID, HWND, window class and executable path.
+
+If Qwen is not detected, open **Settings** and browse to the installed `Qwen.exe` manually. The controller can store that executable path for subsequent launches.
+
+## 7. Window hotkeys
 
 | Hotkey | Action |
 |---|---|
-| Ctrl+Alt+Up / Down | Opacity +5% / -5% (35–100%) |
-| Ctrl+Alt+T | Toggle always-on-top |
-| Ctrl+Alt+X | Toggle click-through; press again to restore interaction |
-| Ctrl+Alt+Q | Hide/show without unloading Qwen |
-| Ctrl+Alt+P | Toggle capture protection |
-| F6 / Shift+F6 | Active-window / current-monitor screenshot to clipboard |
-| Ctrl+Alt+V | Insert clipboard text into Qwen without sending; image uses normal paste |
-| Ctrl+Alt+D | Diagnostics |
-| Hold Right Ctrl | Start / stop shared microphone and loopback capture |
+| `Ctrl+Alt+Q` | Hide/show the real Qwen window |
+| `Ctrl+Alt+X` | Toggle click-through |
+| `Ctrl+Alt+T` | Toggle always-on-top |
+| `Ctrl+Alt+Up` | Increase Qwen opacity by 5% |
+| `Ctrl+Alt+Down` | Decrease Qwen opacity by 5% |
+| `Ctrl+Alt+P` | Show the honest native-mode capture-privacy status |
+| `Ctrl+Alt+V` | Paste Clipboard contents into the real Qwen app |
+| `Ctrl+Alt+D` | Open diagnostics |
+| `F6` | Capture the last active non-Qwen work window to Clipboard |
+| `Shift+F6` | Capture the monitor under the mouse cursor to Clipboard |
+| Hold `Right Ctrl` | Enable the configured Qwen-only audio mix; optionally toggle Qwen's existing voice button |
 
-F6 images exist only in the Windows clipboard; the app writes no screenshot file. Press Ctrl+V in Qwen to paste manually.
+## 8. Transparency
 
-## Click-through and privacy
+Default opacity is 85%.
 
-Click-through leaves the overlay visible but lets mouse input reach the application behind it. Ctrl+Alt+X is global, so it always restores interactive mode. Capture protection calls `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` and only reports ON if Windows returns success. This is honored by supported Windows capture pipelines; it is not absolute protection against every recording method. Use the `TEST` button to open a protected local test window, then verify it using your capture software. Use F6, then paste into Paint, as a local clipboard check.
+Use:
 
-## Audio safety and Qwen-only mixed audio
+- `Ctrl+Alt+Up` to make Qwen more opaque;
+- `Ctrl+Alt+Down` to make it more transparent.
 
-The audio session uses shared-mode physical microphone capture and WASAPI loopback. It neither changes default input/output or communications endpoints nor uses exclusive mode, and it has no speakers output. This protects Teams/Zoom from system-audio echo. Diagnostics records the two input default endpoint IDs at launch and verifies they are unchanged at exit.
+Allowed range: 35%–100%.
 
-Chromium/WebView2 does not expose a standards-based way to turn a native PCM stream directly into Qwen's page `MediaStream`. The application therefore uses a safe optional fallback: it sends the 48 kHz mono mix only to a user-selected **virtual cable render endpoint**, never to speakers. Qwen continues using its normal voice UI and normal `getUserMedia`; select the paired virtual-cable microphone in that UI.
+The controller modifies the real Qwen top-level window style and uses layered-window alpha. The change is reversible. If your particular Qwen build renders incorrectly when layered transparency is applied, restore opacity to 100% and report the diagnostics (window class + executable version/path).
 
-The application refuses to render a mix to the selected loopback device, the Windows default output, the communications default output, or an endpoint whose name is not recognizably virtual (Virtual, Cable, VoiceMeeter, Loopback, or BlackHole). It does not install a driver, choose Qwen's microphone, or modify any Windows default. This prevents system audio from being sent back through Teams/Zoom.
+## 9. Click-through
 
-To enable the fallback, install a trusted signed virtual-audio-cable driver yourself (for example, the vendor's [VB-CABLE documentation and installer](https://vb-audio.com/Cable/)), then:
+Press `Ctrl+Alt+X`.
 
-1. In Settings, select the physical microphone, the playback device to loop back, and the virtual cable's **render/input** endpoint as “Virtual mix output”.
-2. In Qwen's built-in voice UI, select that cable's paired **capture/output** microphone.
-3. Hold Right Ctrl while using Qwen voice. Diagnostics will report `READY` only after the virtual output starts.
+When click-through is ON:
 
-`scripts\setup-virtual-audio.ps1` opens the vendor page, or accepts a locally downloaded installer path and opens it through the required UAC prompt. It never changes default devices before or after installation.
+- Qwen remains visible;
+- mouse clicks go to the application underneath it;
+- you can read an answer while clicking/typing in VS Code or another app below.
 
-## How to verify that Qwen Work Overlay did not break your microphone
+Press `Ctrl+Alt+X` again to return Qwen to normal interaction.
 
-1. Record the Default Input and Default Communications Input IDs in Diagnostics.
-2. Start Teams/Zoom and confirm it uses the physical microphone.
-3. Run this app and hold/release Right Ctrl once; confirm Diagnostics shows either a safe virtual-cable route or a clearly stated unavailable state. Do not route any output to speakers.
-4. Confirm Teams/Zoom still receives the physical microphone only.
-5. Exit the app and reopen Diagnostics on the next run; compare the recorded IDs. The shutdown log in `%LOCALAPPDATA%\QwenWorkOverlay\logs\app.log` reports whether they were unchanged.
+The hotkey is global so you can recover even when Qwen no longer accepts mouse input.
 
-## Troubleshooting
+## 10. Screenshot → Clipboard
 
-Use Ctrl+Alt+D first. If WebView fails, install/repair WebView2 Evergreen Runtime and use `scripts\diagnose.ps1`. Logs intentionally exclude Qwen chats, clipboard contents, screenshots, audio, cookies, and credentials.
+### Active work window
+
+Press:
+
+`F6`
+
+The controller uses the last active window that was neither Qwen nor the controller itself. It first attempts `PrintWindow`, which can capture the target window independently of visual occlusion. If that fails it falls back to screen-copy capture.
+
+The result goes directly to the Windows Clipboard. No PNG/JPG is intentionally saved to disk.
+
+Then focus Qwen and press:
+
+`Ctrl+V`
+
+### Current monitor
+
+Press:
+
+`Shift+F6`
+
+For this controller-owned screenshot function, Qwen is briefly hidden before the screen copy and shown again afterward so the Qwen window is not included in the clipboard screenshot.
+
+## 11. Clipboard → Qwen
+
+Press:
+
+`Ctrl+Alt+V`
+
+The controller activates the existing Qwen window and sends a normal `Ctrl+V` after the global hotkey modifiers have had time to release.
+
+It does not alter text and does not prepend an instruction.
+
+## 12. Audio architecture
+
+The intended topology is:
+
+```text
+Physical microphone ─────┐
+                         ├── Qwen mix ──> optional virtual cable ──> Qwen input
+Windows playback ────────┘
+
+Physical microphone ───────────────────────────────────────> Teams / Zoom normally
+```
+
+The controller does **not** intentionally change:
+
+- Windows Default Input Device;
+- Windows Default Communications Input Device;
+- Windows Default Output Device;
+- Windows Default Communications Output Device.
+
+The physical microphone is opened in shared mode, so conferencing software should still be able to use it normally.
+
+## 13. Configuring microphone + system audio for Qwen only
+
+The native controller cannot safely force another application to use a different input device without relying on application-specific or Windows per-app routing.
+
+The supported safe path is:
+
+1. Install a trusted signed virtual audio cable if you need the mixed signal.
+2. In Controller **Settings**, choose your normal physical microphone.
+3. Choose your normal Windows playback device as the loopback source.
+4. Choose the **render/input side of the virtual cable** as `Virtual mix output`.
+5. Do **not** make that cable your global Windows default microphone.
+6. Configure **Qwen only** to use the paired virtual-cable capture endpoint if Qwen exposes an input-device selector.
+7. If Qwen does not expose one, open Windows per-app audio settings from the controller and use per-app input routing where your Windows build supports it.
+
+The controller rejects a virtual-mix output if it is the current Windows default output or if its device name does not look like a virtual/cable endpoint. This prevents accidentally playing the mixed signal into your speakers and creating feedback.
+
+## 14. Right Ctrl audio behavior
+
+If `Right Ctrl audio` is enabled in Settings:
+
+- Right Ctrl DOWN starts shared-mode microphone + loopback capture and the in-process mixer.
+- While held, the mix is rendered only to the configured recognized virtual endpoint.
+- Right Ctrl UP stops the mixer.
+
+If `Also try to toggle Qwen's existing voice button` is enabled and the mix endpoint is ready, the controller scans the actual Qwen window through Windows UI Automation for a button whose accessible label looks like microphone/voice/audio/record. If an invokable control is found, it tries to invoke it on key-down and again on key-up.
+
+This is best-effort because Qwen can change its accessibility tree. If diagnostics say no voice-like button is exposed, use Qwen's normal microphone button manually. No fake Qwen voice UI is created.
+
+## 15. How to verify that the controller did not break your microphone
+
+Run this test before using the audio feature in an important call:
+
+1. Open Windows Sound settings and note your default input device.
+2. Open Teams/Zoom/Telemost and select your normal physical microphone.
+3. Confirm your voice is detected there.
+4. Launch Qwen Desktop Controller.
+5. Open Controller Diagnostics and note `Default input before` and `Default communications input before`.
+6. Hold Right Ctrl for several seconds with the audio mix configured.
+7. Confirm Teams/Zoom still receives your physical microphone.
+8. Release Right Ctrl.
+9. Exit the controller from its tray menu.
+10. Re-check Windows Sound settings and Teams/Zoom.
+
+Expected result: your normal microphone is unchanged and still works.
+
+If the default device changed, stop using the audio feature and report the diagnostics. The controller itself contains no code intended to set a default endpoint.
+
+## 16. Virtual audio setup helper
+
+The repository contains:
+
+```powershell
+.\scripts\setup-virtual-audio.ps1
+```
+
+This helper does not silently install or reconfigure drivers. It can open a vendor installer with UAC when you explicitly provide one. Driver installation may require administrator approval and a Windows restart.
+
+## 17. Diagnostics
+
+Press `Ctrl+Alt+D` or open **Diagnostics** from the controller.
+
+Useful fields include:
+
+- native Qwen attached;
+- executable path;
+- PID;
+- HWND;
+- window class;
+- opacity;
+- TopMost;
+- click-through;
+- microphone status;
+- loopback status;
+- mixer status;
+- virtual output status;
+- Qwen voice UI Automation state;
+- matched voice-control label;
+- audio default-device guard status;
+- capture-privacy limitation.
+
+## 18. Logs
+
+Technical logs are stored under:
+
+```text
+%LOCALAPPDATA%\QwenDesktopController\logs\app.log
+```
+
+The controller should not log chat contents, Clipboard contents, screenshots or audio content.
+
+## 19. Troubleshooting
+
+### Controller says Qwen is not attached
+
+Open Qwen Desktop normally, then click **Attach / Open Qwen**. If necessary select the exact `Qwen.exe` path in Settings.
+
+### Transparency makes Qwen render incorrectly
+
+Set opacity back to 100%. Send the window class and Qwen executable path/version from Diagnostics before changing the rendering approach.
+
+### Click-through is on and Qwen cannot be clicked
+
+Press `Ctrl+Alt+X`. It is global and is specifically intended as the recovery control.
+
+### F6 captures the wrong window
+
+Activate the work window you want first, then press F6. The controller tracks the most recent non-Qwen foreground top-level window.
+
+### Mixed audio is unavailable
+
+Open Settings and verify:
+
+- physical microphone selected;
+- playback/loopback endpoint selected;
+- recognized virtual cable render endpoint selected.
+
+The controller intentionally refuses to render the mix to a normal physical speaker/headset endpoint.
+
+### Qwen voice does not start on Right Ctrl
+
+Open Diagnostics. If Qwen does not expose an accessible microphone/voice button, start Qwen Voice manually. The audio mixer can still work independently.
+
+### Capture privacy says unsupported
+
+That is intentional in the safe native architecture. The controller does not own the Qwen HWND and therefore does not fake `WDA_EXCLUDEFROMCAPTURE` success.
+
+## 20. Building from source
+
+```powershell
+.\scripts\build.ps1
+```
+
+The script performs restore, Release build, tests and self-contained `win-x64` publish.
+
+Expected executable:
+
+```text
+dist\QwenDesktopController.exe
+```
+
+The GitHub repository also contains a Windows CI workflow that builds, tests and publishes a downloadable workflow artifact.
