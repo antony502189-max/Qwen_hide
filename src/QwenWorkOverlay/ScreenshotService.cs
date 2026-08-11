@@ -25,7 +25,7 @@ public static class ScreenshotService
                 finally { graphics.ReleaseHdc(hdc); }
             }
 
-            // Electron/Chromium windows can report PrintWindow success while returning a black surface.
+            // Electron/Chromium can report PrintWindow success while returning a black/white placeholder surface.
             if (!printed || LooksBlank(bitmap))
             {
                 var presentation = QwenPresentationSnapshot.Capture(qwenHwnd);
@@ -57,8 +57,6 @@ public static class ScreenshotService
         var presentation = QwenPresentationSnapshot.Capture(qwenHwnd);
         try
         {
-            // The native Qwen window cannot safely use WDA_EXCLUDEFROMCAPTURE from this companion process.
-            // For screenshots created by this helper only, hide Qwen briefly and restore the exact visible/minimized/maximized state.
             presentation.HideForCapture();
             if (presentation.WasVisible) Thread.Sleep(65);
 
@@ -96,7 +94,9 @@ public static class ScreenshotService
                 sampled++;
             }
         }
-        return sampled == 0 || (maximum < 10 && maximum - minimum < 4);
+        if (sampled == 0) return true;
+        var nearlyUniform = maximum - minimum < 4;
+        return nearlyUniform && (maximum < 10 || minimum > 245);
     }
 
     private static bool CopyBitmapToClipboard(Bitmap bitmap)
@@ -111,7 +111,6 @@ public static class ScreenshotService
                 BitmapSizeOptions.FromEmptyOptions());
             source.Freeze();
 
-            // Clipboard contention is common during calls/IDE use. Retry briefly instead of failing the hotkey immediately.
             for (var attempt = 0; attempt < 5; attempt++)
             {
                 try
@@ -132,24 +131,42 @@ public static class ScreenshotService
         }
     }
 
-    private readonly record struct QwenPresentationSnapshot(IntPtr Hwnd, bool WasVisible, bool WasMinimized, bool WasMaximized)
+    private readonly record struct QwenPresentationSnapshot(
+        IntPtr Hwnd,
+        bool WasVisible,
+        bool WasMinimized,
+        bool WasMaximized,
+        bool WasForeground)
     {
         public static QwenPresentationSnapshot Capture(IntPtr hwnd)
         {
-            if (hwnd == IntPtr.Zero || !Native.IsWindow(hwnd)) return new(IntPtr.Zero, false, false, false);
-            return new(hwnd, Native.IsWindowVisible(hwnd), Native.IsIconic(hwnd), Native.IsZoomed(hwnd));
+            if (hwnd == IntPtr.Zero || !Native.IsWindow(hwnd))
+                return new(IntPtr.Zero, false, false, false, false);
+            var foregroundRoot = Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT);
+            return new(
+                hwnd,
+                Native.IsWindowVisible(hwnd),
+                Native.IsIconic(hwnd),
+                Native.IsZoomed(hwnd),
+                foregroundRoot == hwnd);
         }
 
         public void HideForCapture()
         {
-            if (WasVisible && Hwnd != IntPtr.Zero && Native.IsWindow(Hwnd)) Native.ShowWindowAsync(Hwnd, Native.SW_HIDE);
+            if (WasVisible && Hwnd != IntPtr.Zero && Native.IsWindow(Hwnd))
+                Native.ShowWindowAsync(Hwnd, Native.SW_HIDE);
         }
 
         public void Restore()
         {
             if (!WasVisible || Hwnd == IntPtr.Zero || !Native.IsWindow(Hwnd)) return;
-            var command = WasMinimized ? Native.SW_SHOWMINIMIZED : WasMaximized ? Native.SW_SHOWMAXIMIZED : Native.SW_SHOWNOACTIVATE;
+            var command = WasMinimized
+                ? Native.SW_SHOWMINIMIZED
+                : WasMaximized
+                    ? Native.SW_SHOWMAXIMIZED
+                    : Native.SW_SHOWNOACTIVATE;
             Native.ShowWindowAsync(Hwnd, command);
+            if (WasForeground && !WasMinimized) Native.SetForegroundWindow(Hwnd);
         }
     }
 
