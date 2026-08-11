@@ -180,6 +180,11 @@ public class CoreTests
         Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("CABLE Input (VB-Audio Virtual Cable)"));
         Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("VoiceMeeter Input"));
         Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("VB-Audio Point"));
+        Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("My Virtual Audio Device"));
+
         Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName("Speakers (Realtek(R) Audio)"));
+        Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName("Headphones (USB Audio Virtual Surround)"));
+        Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName("NVIDIA High Definition Audio (Virtual Display)"));
+        Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName("Bluetooth Headset Loopback"));
     }
 }
