@@ -71,6 +71,8 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item scripts\runtime-probe.ps1 dist\runtime-probe.ps1 -Force
+          Copy-Item scripts\diagnose.ps1 dist\diagnose.ps1 -Force
+          Copy-Item scripts\setup-virtual-audio.ps1 dist\setup-virtual-audio.ps1 -Force
           Copy-Item README.md dist\README.md -Force
           Copy-Item GUIDE_EN.md dist\GUIDE_EN.md -Force
           Copy-Item GUIDE_RU.md dist\GUIDE_RU.md -Force
@@ -83,6 +85,8 @@ jobs:
           $required = @(
             'dist\QwenDesktopController.exe',
             'dist\runtime-probe.ps1',
+            'dist\diagnose.ps1',
+            'dist\setup-virtual-audio.ps1',
             'dist\GUIDE_RU.md',
             'dist\RUN_ME_FIRST_RU.txt'
           )
