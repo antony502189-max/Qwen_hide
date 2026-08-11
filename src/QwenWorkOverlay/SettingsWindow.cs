@@ -104,14 +104,43 @@ public sealed class SettingsWindow : Window
         var save = new Button { Content = "Save", Width = 90, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 20, 0, 0) };
         save.Click += (_, _) =>
         {
-            s.QwenExecutablePath = string.IsNullOrWhiteSpace(qwenPath.Text) ? null : qwenPath.Text.Trim();
+            var requestedQwenPath = string.IsNullOrWhiteSpace(qwenPath.Text) ? null : qwenPath.Text.Trim().Trim('"');
+            if (requestedQwenPath is not null)
+            {
+                requestedQwenPath = Environment.ExpandEnvironmentVariables(requestedQwenPath);
+                if (!File.Exists(requestedQwenPath) || !Path.GetFileName(requestedQwenPath).Equals("Qwen.exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show(this,
+                        "The selected path must point to an existing Qwen.exe. Leave it blank to use automatic detection.",
+                        "Invalid Qwen path",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+            }
+
+            var selectedLoopback = loopback.SelectedValue as string;
+            var selectedVirtualMix = virtualMix.SelectedValue as string;
+            if (!string.IsNullOrWhiteSpace(selectedVirtualMix) &&
+                !devices.ValidateVirtualMixOutput(selectedVirtualMix, selectedLoopback, out var virtualReason))
+            {
+                MessageBox.Show(this,
+                    "The selected virtual mix destination was rejected for audio safety:\n\n" + virtualReason +
+                    "\n\nChoose a dedicated virtual cable render endpoint, not physical speakers/headphones or a Windows default output.",
+                    "Unsafe virtual audio destination",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            s.QwenExecutablePath = requestedQwenPath;
             s.AutoLaunchQwen = autoLaunch.IsChecked == true;
             s.StartControllerInTray = tray.IsChecked == true;
             s.Opacity = opacity.Value;
             s.TopMost = top.IsChecked == true;
             s.MicrophoneDeviceId = mic.SelectedValue as string;
-            s.LoopbackDeviceId = loopback.SelectedValue as string;
-            s.VirtualMixOutputDeviceId = virtualMix.SelectedValue as string;
+            s.LoopbackDeviceId = selectedLoopback;
+            s.VirtualMixOutputDeviceId = selectedVirtualMix;
             s.RightCtrlAudioEnabled = right.IsChecked == true;
             s.AutoToggleQwenVoiceWithRightCtrl = voiceToggle.IsChecked == true;
 
@@ -119,7 +148,16 @@ public sealed class SettingsWindow : Window
             if (!float.TryParse(sg.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var systemGain)) systemGain = 1f;
             s.MicGain = Math.Clamp(micGain, 0f, 4f);
             s.SystemGain = Math.Clamp(systemGain, 0f, 4f);
-            service.Save();
+
+            if (!service.Save())
+            {
+                MessageBox.Show(this,
+                    service.LastPersistenceError ?? "Settings could not be saved.",
+                    "Settings save failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
             Close();
         };
         panel.Children.Add(save);
