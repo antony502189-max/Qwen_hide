@@ -59,15 +59,7 @@ public sealed class QwenVoiceAutomation
                 return true;
             }
 
-            if (candidate.Element.TryGetCurrentPattern(LegacyIAccessiblePattern.Pattern, out var legacyObject) && legacyObject is LegacyIAccessiblePattern legacy)
-            {
-                legacy.DoDefaultAction();
-                State = "Voice button invoked through accessibility default action";
-                _log.Info("Qwen voice automation legacy-invoked: " + candidate.Label);
-                return true;
-            }
-
-            State = "Voice-like button found but it exposes no invokable pattern";
+            State = "Voice-like button found but it exposes no InvokePattern";
             return false;
         }
         catch (Exception ex)
@@ -90,8 +82,15 @@ public sealed class QwenVoiceAutomation
         try
         {
             var root = AutomationElement.FromHandle(qwenHwnd);
-            if (root is null) { State = "UI Automation root unavailable"; return; }
-            var buttons = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+            if (root is null)
+            {
+                State = "UI Automation root unavailable";
+                return;
+            }
+
+            var buttons = root.FindAll(
+                TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
             var best = new List<(int Score, string Label)>();
             foreach (AutomationElement element in buttons)
             {
@@ -99,6 +98,7 @@ public sealed class QwenVoiceAutomation
                 var score = Score(label);
                 if (score > 0) best.Add((score, label));
             }
+
             var candidate = best.OrderByDescending(x => x.Score).FirstOrDefault();
             LastMatchedButton = candidate.Label;
             State = candidate.Score > 0
@@ -129,6 +129,9 @@ public sealed class QwenVoiceAutomation
             var value = element.GetCurrentPropertyValue(property, true);
             return value == AutomationElement.NotSupported ? string.Empty : value?.ToString() ?? string.Empty;
         }
-        catch { return string.Empty; }
+        catch
+        {
+            return string.Empty;
+        }
     }
 }
