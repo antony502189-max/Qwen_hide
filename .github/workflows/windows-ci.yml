@@ -1,0 +1,42 @@
+name: Windows CI
+
+on:
+  push:
+    branches:
+      - main
+      - refactor/native-qwen-controller
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore QwenWorkOverlay.sln
+
+      - name: Build
+        run: dotnet build QwenWorkOverlay.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test QwenWorkOverlay.sln -c Release --no-build --logger "trx;LogFileName=tests.trx"
+
+      - name: Publish win-x64
+        run: dotnet publish src/QwenWorkOverlay/QwenWorkOverlay.csproj -c Release -r win-x64 --self-contained true -o dist
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QwenDesktopController-win-x64
+          path: dist/
+          if-no-files-found: error
