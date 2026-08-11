@@ -2,12 +2,48 @@ namespace QwenWorkOverlay;
 
 public static class VirtualMixOutputPolicy
 {
-    public static bool IsRecognizedVirtualName(string? name) =>
-        !string.IsNullOrWhiteSpace(name) &&
-        System.Text.RegularExpressions.Regex.IsMatch(
-            name,
-            "virtual|cable|voicemeeter|loopback|blackhole|vb-audio",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    public static bool IsRecognizedVirtualName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        var value = name.Trim().ToLowerInvariant();
+
+        // Strong vendor/product markers are safe enough to accept even when Windows adds generic endpoint words.
+        var strongVirtual = new[]
+        {
+            "vb-audio",
+            "voicemeeter",
+            "virtual audio cable",
+            "virtual cable",
+            "cable input",
+            "cable-a input",
+            "cable-b input",
+            "cable-c input",
+            "blackhole"
+        };
+        if (strongVirtual.Any(value.Contains)) return true;
+
+        // Generic "virtual"/"loopback" labels alone are not enough when the same name clearly describes
+        // physical playback hardware. Sending the mixed stream there could create an acoustic feedback loop.
+        var genericVirtual = value.Contains("virtual") || value.Contains("loopback");
+        if (!genericVirtual) return false;
+
+        var physicalMarkers = new[]
+        {
+            "speaker",
+            "headphone",
+            "headset",
+            "realtek",
+            "nvidia high definition",
+            "display audio",
+            "hdmi",
+            "bluetooth",
+            "airpods",
+            "soundbar",
+            "monitor audio",
+            "usb audio"
+        };
+        return !physicalMarkers.Any(value.Contains);
+    }
 }
 
 public enum ClipboardPayloadKind { Empty, Text, Image }
