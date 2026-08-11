@@ -87,6 +87,7 @@ public sealed class GlobalHotkeys : IDisposable
         Register(8, "Ctrl+Alt+D Diagnostics", MOD_CONTROL | MOD_ALT, 0x44);
         Register(9, "F6 Screenshot", 0, 0x75);
         Register(10, "Shift+F6 Monitor screenshot", MOD_SHIFT, 0x75);
+        Register(11, "Ctrl+Alt+Esc Emergency restore/exit", MOD_CONTROL | MOD_ALT, 0x1B);
 
         _hookProc = KeyboardHook;
         _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, GetModuleHandle(null), 0);
