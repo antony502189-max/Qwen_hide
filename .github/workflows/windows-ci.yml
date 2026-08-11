@@ -1,13 +1,14 @@
 name: Windows CI
 
 on:
-  push:
-    branches:
-      - main
-      - refactor/native-qwen-controller
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: windows-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-test-publish:
