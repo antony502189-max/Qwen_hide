@@ -81,26 +81,18 @@ public sealed class WindowRecoveryService
                 return;
             }
 
-            // If the original process is still alive, only delete the journal when the externally visible
-            // state really matches the pre-controller snapshot. Otherwise keep it for the next recovery attempt.
             var currentStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
             var styleMatches = currentStyle == snapshot.OriginalExStyle;
             var topMostMatches = ((currentStyle & Native.WS_EX_TOPMOST) != 0) == snapshot.OriginalTopMost;
             var visibleMatches = Native.IsWindowVisible(hwnd) == snapshot.OriginalVisible;
             var layeredMatches = true;
             if (snapshot.OriginalLayered && Native.GetLayeredWindowAttributes(hwnd, out var key, out var alpha, out var flags))
-            {
                 layeredMatches = key == snapshot.OriginalColorKey && alpha == snapshot.OriginalAlpha && flags == snapshot.OriginalLayerFlags;
-            }
 
             if (styleMatches && topMostMatches && visibleMatches && layeredMatches)
-            {
                 DeleteJournal();
-            }
             else
-            {
                 _log.Error($"Keeping Qwen recovery journal because restoration verification failed: style={styleMatches}, topmost={topMostMatches}, visible={visibleMatches}, layered={layeredMatches}");
-            }
         }
         catch (Exception ex)
         {
@@ -155,7 +147,7 @@ public sealed class WindowRecoveryService
                 0, 0, 0, 0,
                 Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
 
-            Native.ShowWindowAsync(hwnd, snapshot.OriginalVisible ? Native.SW_SHOW : Native.SW_HIDE);
+            Native.ShowWindow(hwnd, snapshot.OriginalVisible ? Native.SW_SHOW : Native.SW_HIDE);
 
             if (!styleOk || !layeredOk || !topMostOk)
             {
