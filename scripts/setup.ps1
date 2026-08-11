@@ -2,11 +2,30 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $localDotnet = Join-Path $root '.tools\dotnet\dotnet.exe'
 
-if (-not (Test-Path $localDotnet) -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    & (Join-Path $PSScriptRoot 'install-dotnet-sdk.ps1')
+function Test-DotNet8Sdk([string]$Exe) {
+    if (-not $Exe -or -not (Test-Path $Exe)) { return $false }
+    try {
+        $sdks = & $Exe --list-sdks 2>$null
+        return [bool]($sdks | Where-Object { $_ -match '^8\.0\.' })
+    } catch { return $false }
 }
 
-$dotnet = if (Test-Path $localDotnet) { $localDotnet } else { (Get-Command dotnet -ErrorAction Stop).Source }
+$systemDotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
+$systemDotnet = if ($systemDotnetCommand) { $systemDotnetCommand.Source } else { $null }
+
+if (Test-DotNet8Sdk $localDotnet) {
+    $dotnet = $localDotnet
+} elseif (Test-DotNet8Sdk $systemDotnet) {
+    $dotnet = $systemDotnet
+} else {
+    Write-Host '.NET 8 SDK not found; installing a local project-scoped SDK...'
+    & (Join-Path $PSScriptRoot 'install-dotnet-sdk.ps1')
+    if (-not (Test-DotNet8Sdk $localDotnet)) { throw 'Local .NET 8 SDK installation did not produce a usable SDK.' }
+    $dotnet = $localDotnet
+}
+
+Write-Host "Using dotnet: $dotnet"
+& $dotnet --version
 & $dotnet --info
 
 $localData = Join-Path $env:LOCALAPPDATA 'QwenDesktopController'
@@ -22,4 +41,4 @@ if ($qwen) {
 }
 
 & $dotnet restore (Join-Path $root 'QwenWorkOverlay.sln')
-Write-Host 'Setup complete. This project no longer requires WebView2 because it controls the already-installed Qwen Desktop app.'
+Write-Host 'Setup complete. Native-controller mode uses the already-installed Qwen Desktop app and does not require WebView2.'
