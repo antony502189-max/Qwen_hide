@@ -5,30 +5,44 @@ $dotnet = if (Test-Path $localDotnet) { $localDotnet } else { (Get-Command dotne
 $solution = Join-Path $root 'QwenWorkOverlay.sln'
 $project = Join-Path $root 'src\QwenWorkOverlay\QwenWorkOverlay.csproj'
 $dist = Join-Path $root 'dist'
+$distSingle = Join-Path $root 'dist-single'
 
 & $dotnet restore $solution
 & $dotnet build $solution -c Release --no-restore
 & $dotnet test $solution -c Release --no-build
 
-if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
+foreach ($directory in @($dist, $distSingle)) {
+    if (Test-Path $directory) { Remove-Item $directory -Recurse -Force }
+}
+
 & $dotnet restore $project -r win-x64
 & $dotnet publish $project -c Release -r win-x64 --self-contained true -o $dist
+& $dotnet publish $project -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o $distSingle
 
-Copy-Item (Join-Path $root 'scripts\runtime-probe.ps1') (Join-Path $dist 'runtime-probe.ps1') -Force
-Copy-Item (Join-Path $root 'scripts\diagnose.ps1') (Join-Path $dist 'diagnose.ps1') -Force
-Copy-Item (Join-Path $root 'scripts\setup-virtual-audio.ps1') (Join-Path $dist 'setup-virtual-audio.ps1') -Force
-Copy-Item (Join-Path $root 'README.md') (Join-Path $dist 'README.md') -Force
-Copy-Item (Join-Path $root 'GUIDE_EN.md') (Join-Path $dist 'GUIDE_EN.md') -Force
-Copy-Item (Join-Path $root 'GUIDE_RU.md') (Join-Path $dist 'GUIDE_RU.md') -Force
-Copy-Item (Join-Path $root 'MANUAL_TEST_CHECKLIST_EN.md') (Join-Path $dist 'MANUAL_TEST_CHECKLIST_EN.md') -Force
-Copy-Item (Join-Path $root 'RUN_ME_FIRST_RU.txt') (Join-Path $dist 'RUN_ME_FIRST_RU.txt') -Force
+function Add-ReleaseExtras([string]$destination) {
+    foreach ($name in @('runtime-probe.ps1','diagnose.ps1','setup-virtual-audio.ps1')) {
+        Copy-Item (Join-Path $root "scripts\$name") (Join-Path $destination $name) -Force
+    }
+    foreach ($name in @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')) {
+        Copy-Item (Join-Path $root $name) (Join-Path $destination $name) -Force
+    }
 
-$exe = Join-Path $dist 'QwenDesktopController.exe'
-if (-not (Test-Path $exe)) { throw "Publish completed but executable was not found: $exe" }
-$hash = Get-FileHash $exe -Algorithm SHA256
-Write-Host "Release executable: $exe"
-Write-Host "SHA256: $($hash.Hash)"
-Write-Host "Runtime probe: $(Join-Path $dist 'runtime-probe.ps1')"
-Write-Host "Diagnostics helper: $(Join-Path $dist 'diagnose.ps1')"
-Write-Host "Virtual-audio helper: $(Join-Path $dist 'setup-virtual-audio.ps1')"
-Write-Host "Russian guide: $(Join-Path $dist 'GUIDE_RU.md')"
+    $exe = Join-Path $destination 'QwenDesktopController.exe'
+    if (-not (Test-Path $exe)) { throw "Publish completed but executable was not found: $exe" }
+    $hash = Get-FileHash $exe -Algorithm SHA256
+    "QwenDesktopController.exe  SHA256  $($hash.Hash)" | Set-Content -Encoding ASCII (Join-Path $destination 'SHA256SUMS.txt')
+    Write-Host "Release executable: $exe"
+    Write-Host "SHA256: $($hash.Hash)"
+}
+
+Add-ReleaseExtras $dist
+Add-ReleaseExtras $distSingle
+
+if (Test-Path (Join-Path $distSingle 'QwenDesktopController.dll')) {
+    throw 'Single-file publish unexpectedly contains QwenDesktopController.dll.'
+}
+
+Write-Host "Reliable multi-file release: $dist"
+Write-Host "Single-file release: $distSingle"
+Write-Host "Runtime probe: $(Join-Path $distSingle 'runtime-probe.ps1')"
+Write-Host "Russian guide: $(Join-Path $distSingle 'GUIDE_RU.md')"
