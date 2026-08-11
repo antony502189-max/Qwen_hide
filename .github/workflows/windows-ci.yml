@@ -33,6 +33,28 @@ jobs:
             throw 'Embedded WebView/Qwen wrapper code is forbidden in native-controller mode.'
           }
 
+      - name: PowerShell parse and runtime-probe smoke
+        shell: pwsh
+        run: |
+          $parseFailures = @()
+          Get-ChildItem scripts -Filter *.ps1 -File | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $parseFailures += $errors | ForEach-Object { "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)" }
+            }
+          }
+          if ($parseFailures.Count -gt 0) {
+            $parseFailures | ForEach-Object { Write-Error $_ }
+            throw 'PowerShell parse validation failed.'
+          }
+          $probe = Join-Path $env:RUNNER_TEMP 'qdc-runtime-probe.json'
+          & .\scripts\runtime-probe.ps1 -OutputPath $probe
+          if (-not (Test-Path $probe)) { throw 'Runtime probe did not create JSON output.' }
+          $parsed = Get-Content -Raw $probe | ConvertFrom-Json
+          if (-not $parsed.generatedAt) { throw 'Runtime probe JSON is malformed.' }
+
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
 
