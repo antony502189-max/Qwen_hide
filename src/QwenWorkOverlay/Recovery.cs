@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace QwenWorkOverlay;
@@ -23,6 +24,7 @@ public sealed class WindowRecoveryService
     private readonly string _path = Path.Combine(SettingsService.Root, "window-recovery.json");
 
     public WindowRecoveryService(AppLogger log) => _log = log;
+    public bool HasPendingSnapshot => File.Exists(_path);
 
     public void Save(QwenTarget target, IntPtr originalExStyle, bool originalTopMost, bool originalVisible,
         bool originalLayered, byte originalAlpha, uint originalLayerFlags, uint originalColorKey)
@@ -43,7 +45,9 @@ public sealed class WindowRecoveryService
                 OriginalColorKey = originalColorKey
             };
             Directory.CreateDirectory(SettingsService.Root);
-            File.WriteAllText(_path, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
+            var temp = _path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temp, _path, true);
         }
         catch (Exception ex)
         {
@@ -63,39 +67,77 @@ public sealed class WindowRecoveryService
         try
         {
             var snapshot = JsonSerializer.Deserialize<WindowRecoverySnapshot>(File.ReadAllText(_path));
-            if (snapshot is null) { Clear(); return false; }
-
-            var hwnd = new IntPtr(snapshot.Hwnd);
-            if (!Native.IsWindow(hwnd)) { Clear(); return false; }
-            Native.GetWindowThreadProcessId(hwnd, out var ownerPid);
-            if (ownerPid != snapshot.ProcessId) { Clear(); return false; }
-
-            using var process = Process.GetProcessById(snapshot.ProcessId);
-            var startTicks = process.StartTime.ToUniversalTime().Ticks;
-            if (snapshot.ProcessStartUtcTicks != 0 && startTicks != snapshot.ProcessStartUtcTicks)
+            if (snapshot is null)
             {
                 Clear();
                 return false;
             }
 
-            Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(snapshot.OriginalExStyle));
-            if (snapshot.OriginalLayered)
-                Native.SetLayeredWindowAttributes(hwnd, snapshot.OriginalColorKey, snapshot.OriginalAlpha, snapshot.OriginalLayerFlags);
+            var hwnd = new IntPtr(snapshot.Hwnd);
+            if (!Native.IsWindow(hwnd))
+            {
+                // The original window no longer exists, so there is nothing left to recover.
+                Clear();
+                return false;
+            }
 
-            Native.SetWindowPos(hwnd,
+            Native.GetWindowThreadProcessId(hwnd, out var ownerPid);
+            if (ownerPid != snapshot.ProcessId)
+            {
+                // HWND was reused by another process: never touch it.
+                Clear();
+                return false;
+            }
+
+            using var process = Process.GetProcessById(snapshot.ProcessId);
+            var startTicks = process.StartTime.ToUniversalTime().Ticks;
+            if (snapshot.ProcessStartUtcTicks != 0 && startTicks != snapshot.ProcessStartUtcTicks)
+            {
+                // PID was reused: never apply stale styles to the new process.
+                Clear();
+                return false;
+            }
+
+            Marshal.SetLastPInvokeError(0);
+            Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(snapshot.OriginalExStyle));
+            var styleOk = Marshal.GetLastWin32Error() == 0;
+
+            var layeredOk = true;
+            if (snapshot.OriginalLayered)
+                layeredOk = Native.SetLayeredWindowAttributes(hwnd, snapshot.OriginalColorKey, snapshot.OriginalAlpha, snapshot.OriginalLayerFlags);
+
+            var topMostOk = Native.SetWindowPos(hwnd,
                 snapshot.OriginalTopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
                 0, 0, 0, 0,
                 Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
 
+            // Visibility restoration is best-effort: ShowWindowAsync's return value reflects prior state, not success.
             Native.ShowWindowAsync(hwnd, snapshot.OriginalVisible ? Native.SW_SHOW : Native.SW_HIDE);
-            _log.Info($"Recovered stale native Qwen window state from previous controller session (PID {snapshot.ProcessId}, HWND 0x{snapshot.Hwnd:X})");
+
+            if (!styleOk || !layeredOk || !topMostOk)
+            {
+                _log.Error($"Qwen window recovery incomplete; keeping journal for retry. style={styleOk}, layered={layeredOk}, topmost={topMostOk}");
+                return false;
+            }
+
+            _log.Info($"Recovered native Qwen window state (PID {snapshot.ProcessId}, HWND 0x{snapshot.Hwnd:X})");
             Clear();
             return true;
         }
+        catch (ArgumentException)
+        {
+            // Process exited between validation steps.
+            Clear();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            Clear();
+            return false;
+        }
         catch (Exception ex)
         {
-            _log.Error("Stale Qwen window recovery failed safely: " + ex.GetType().Name);
-            Clear();
+            _log.Error("Qwen window recovery failed safely and will be retried: " + ex.GetType().Name);
             return false;
         }
     }
