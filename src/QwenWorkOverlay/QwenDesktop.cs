@@ -49,7 +49,7 @@ public sealed class QwenProcessLocator
             }
             catch
             {
-                // Processes may exit while being enumerated.
+                // Processes can exit while enumerated, and elevated processes may reject module inspection.
             }
             finally
             {
@@ -187,10 +187,10 @@ public sealed class QwenWindowController : IDisposable
     private bool _topMost;
     private bool _hidden;
 
-    public QwenWindowController(AppLogger log)
+    public QwenWindowController(AppLogger log, WindowRecoveryService? recovery = null)
     {
         _log = log;
-        _recovery = new WindowRecoveryService(log);
+        _recovery = recovery ?? new WindowRecoveryService(log);
     }
 
     public QwenTarget? Target => _target;
@@ -216,11 +216,14 @@ public sealed class QwenWindowController : IDisposable
         _originalAlpha = 255;
         _originalLayerFlags = Native.LWA_ALPHA;
         _originalColorKey = 0;
-        if (_originalLayered && Native.GetLayeredWindowAttributes(target.Hwnd, out var key, out var alpha, out var flags))
+
+        // If Qwen already uses layered-window attributes of its own, we must be able to read them before
+        // changing alpha. Otherwise an exact rollback cannot be guaranteed, so refuse attachment safely.
+        if (_originalLayered && !Native.GetLayeredWindowAttributes(target.Hwnd, out _originalColorKey, out _originalAlpha, out _originalLayerFlags))
         {
-            _originalColorKey = key;
-            _originalAlpha = alpha;
-            _originalLayerFlags = flags;
+            _log.Error("Native Qwen is already layered but its original layered attributes are unreadable; refusing unsafe style mutation");
+            _target = null;
+            return false;
         }
 
         _recovery.Save(target, _originalExStyle, _originalTopMost, _originalVisible,
@@ -242,49 +245,69 @@ public sealed class QwenWindowController : IDisposable
     {
         if (!IsAttached) return false;
         value = Math.Clamp(value, .35, 1.0);
+        var previous = _opacity;
         _opacity = value;
-        return ApplyStyles();
+        if (ApplyStyles()) return true;
+        _opacity = previous;
+        ApplyStyles();
+        return false;
     }
 
     public bool SetClickThrough(bool enabled)
     {
         if (!IsAttached) return false;
+        var previous = _clickThrough;
         _clickThrough = enabled;
-        return ApplyStyles();
+        if (ApplyStyles()) return true;
+        _clickThrough = previous;
+        ApplyStyles();
+        return false;
     }
 
     public bool SetTopMost(bool enabled)
     {
         if (!IsAttached) return false;
-        _topMost = enabled;
         var ok = Native.SetWindowPos(
             _target!.Hwnd,
             enabled ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
             0, 0, 0, 0,
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
-        if (!ok) _log.Error("SetWindowPos TopMost failed; win32=" + Marshal.GetLastWin32Error());
-        return ok;
+        if (!ok)
+        {
+            _log.Error("SetWindowPos TopMost failed; win32=" + Marshal.GetLastWin32Error());
+            return false;
+        }
+        _topMost = enabled;
+        return true;
     }
 
     public bool ToggleVisibility()
     {
         if (!IsAttached) return false;
         var currentlyVisible = Native.IsWindowVisible(_target!.Hwnd);
-        _hidden = currentlyVisible;
         var ok = Native.ShowWindowAsync(_target.Hwnd, currentlyVisible ? Native.SW_HIDE : Native.SW_SHOW);
-        if (!ok) _log.Error("ShowWindowAsync visibility toggle failed; win32=" + Marshal.GetLastWin32Error());
-        return ok;
+        if (!ok)
+        {
+            _log.Error("ShowWindowAsync visibility toggle failed; win32=" + Marshal.GetLastWin32Error());
+            return false;
+        }
+        _hidden = currentlyVisible;
+        return true;
     }
 
     public bool ShowAndActivate()
     {
         if (!IsAttached) return false;
-        _hidden = false;
         Native.ShowWindowAsync(_target!.Hwnd, Native.SW_RESTORE);
         Native.ShowWindowAsync(_target.Hwnd, Native.SW_SHOW);
         var ok = Native.SetForegroundWindow(_target.Hwnd);
-        if (!ok) _log.Error("SetForegroundWindow failed for native Qwen");
-        return ok;
+        if (!ok)
+        {
+            _log.Error("SetForegroundWindow failed for native Qwen");
+            return false;
+        }
+        _hidden = false;
+        return true;
     }
 
     private bool ApplyStyles()
@@ -292,17 +315,13 @@ public sealed class QwenWindowController : IDisposable
         if (!IsAttached) return false;
         var hwnd = _target!.Hwnd;
         var original = _originalExStyle.ToInt64();
-        var desired = original;
-
-        // WS_EX_TRANSPARENT provides reliable hit-test pass-through for a layered top-level window.
-        if (_opacity < .999 || _clickThrough) desired |= Native.WS_EX_LAYERED;
-        if (_clickThrough) desired |= Native.WS_EX_TRANSPARENT;
-        else if ((original & Native.WS_EX_TRANSPARENT) == 0) desired &= ~Native.WS_EX_TRANSPARENT;
+        var desired = WindowStylePolicy.ComputeExtendedStyle(original, _opacity, _clickThrough);
 
         Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(desired));
-        if (Marshal.GetLastWin32Error() != 0)
+        var styleError = Marshal.GetLastWin32Error();
+        if (styleError != 0)
         {
-            _log.Error("SetWindowLongPtr failed for native Qwen HWND; win32=" + Marshal.GetLastWin32Error());
+            _log.Error("SetWindowLongPtr failed for native Qwen HWND; win32=" + styleError);
             return false;
         }
 
@@ -316,7 +335,11 @@ public sealed class QwenWindowController : IDisposable
         }
         else if (_originalLayered)
         {
-            Native.SetLayeredWindowAttributes(hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags);
+            if (!Native.SetLayeredWindowAttributes(hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags))
+            {
+                _log.Error("Could not restore Qwen original layered attributes; win32=" + Marshal.GetLastWin32Error());
+                return false;
+            }
         }
         else if (_clickThrough)
         {
@@ -325,11 +348,6 @@ public sealed class QwenWindowController : IDisposable
                 _log.Error("Could not enable layered click-through for native Qwen; win32=" + Marshal.GetLastWin32Error());
                 return false;
             }
-        }
-        else
-        {
-            var withoutLayer = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64() & ~Native.WS_EX_LAYERED;
-            Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(withoutLayer));
         }
 
         var frameOk = Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
@@ -347,15 +365,19 @@ public sealed class QwenWindowController : IDisposable
             if (target is not null && Native.IsWindow(target.Hwnd) && restore)
             {
                 Native.SetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE, _originalExStyle);
-                if (_originalLayered)
-                    Native.SetLayeredWindowAttributes(target.Hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags);
+                var styleError = Marshal.GetLastWin32Error();
+                if (styleError != 0) _log.Error("Restoring original Qwen exstyle failed; win32=" + styleError);
 
-                Native.SetWindowPos(target.Hwnd,
+                if (_originalLayered && !Native.SetLayeredWindowAttributes(target.Hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags))
+                    _log.Error("Restoring original Qwen layered attributes failed; win32=" + Marshal.GetLastWin32Error());
+
+                if (!Native.SetWindowPos(target.Hwnd,
                     _originalTopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
                     0, 0, 0, 0,
-                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
+                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED))
+                    _log.Error("Restoring original Qwen TopMost failed; win32=" + Marshal.GetLastWin32Error());
 
-                Native.ShowWindowAsync(target.Hwnd, _originalVisible ? Native.SW_SHOW : Native.SW_HIDE);
+                Native.ShowWindow(target.Hwnd, _originalVisible ? Native.SW_SHOW : Native.SW_HIDE);
             }
         }
         finally
@@ -385,6 +407,12 @@ public sealed class ForegroundWindowTracker : IDisposable
     }
 
     public IntPtr LastNonQwenWindow => Native.IsWindow(_lastNonQwen) ? _lastNonQwen : IntPtr.Zero;
+
+    public IntPtr CurrentOrLastNonQwenWindow()
+    {
+        Sample();
+        return LastNonQwenWindow;
+    }
 
     private void Sample()
     {
