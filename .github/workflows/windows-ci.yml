@@ -55,18 +55,35 @@ jobs:
           $parsed = Get-Content -Raw $probe | ConvertFrom-Json
           if (-not $parsed.generatedAt) { throw 'Runtime probe JSON is malformed.' }
 
-      - name: Windows PowerShell 5.1 runtime-probe compatibility
+      - name: Windows PowerShell 5.1 runtime-probe compatibility with Qwen-like process
         shell: pwsh
         run: |
           $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           if (-not (Test-Path $winps)) { throw "Windows PowerShell executable not found: $winps" }
-          $probe = Join-Path $env:RUNNER_TEMP 'qdc-runtime-probe-winps51.json'
-          & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\runtime-probe.ps1 -OutputPath $probe
-          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell runtime probe failed with exit code $LASTEXITCODE" }
-          if (-not (Test-Path $probe)) { throw 'Windows PowerShell runtime probe did not create JSON output.' }
-          $parsed = Get-Content -Raw $probe | ConvertFrom-Json
-          if (-not $parsed.generatedAt) { throw 'Windows PowerShell runtime probe JSON is malformed.' }
-          Write-Host "Windows PowerShell compatibility probe version: $($parsed.powershellVersion)"
+
+          # The earlier compatibility smoke had no Qwen process, so the exact target branch of the
+          # probe was never executed. Launch a harmless copied ping.exe whose process name contains
+          # "Qwen" so Windows PowerShell 5.1 must exercise process metadata and native HWND handling.
+          $qwenProbeExe = Join-Path $env:RUNNER_TEMP 'QwenProbe.exe'
+          Copy-Item (Join-Path $env:SystemRoot 'System32\ping.exe') $qwenProbeExe -Force
+          $synthetic = Start-Process -FilePath $qwenProbeExe -ArgumentList '127.0.0.1','-t' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Milliseconds 500
+            $probe = Join-Path $env:RUNNER_TEMP 'qdc-runtime-probe-winps51.json'
+            & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\runtime-probe.ps1 -OutputPath $probe
+            if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell runtime probe failed with exit code $LASTEXITCODE" }
+            if (-not (Test-Path $probe)) { throw 'Windows PowerShell runtime probe did not create JSON output.' }
+            $parsed = Get-Content -Raw $probe | ConvertFrom-Json
+            if (-not $parsed.generatedAt) { throw 'Windows PowerShell runtime probe JSON is malformed.' }
+            if (@($parsed.qwenProcesses).Count -lt 1) { throw 'Windows PowerShell runtime probe did not enumerate the synthetic Qwen-like process.' }
+            $match = @($parsed.qwenProcesses | Where-Object { $_.processName -match 'QwenProbe' })
+            if ($match.Count -lt 1) { throw 'Synthetic QwenProbe process is missing from runtime probe JSON.' }
+            Write-Host "Windows PowerShell compatibility probe version: $($parsed.powershellVersion)"
+            Write-Host "Synthetic Qwen-like processes enumerated: $(@($parsed.qwenProcesses).Count)"
+          }
+          finally {
+            if ($synthetic -and -not $synthetic.HasExited) { Stop-Process -Id $synthetic.Id -Force -ErrorAction SilentlyContinue }
+          }
 
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
