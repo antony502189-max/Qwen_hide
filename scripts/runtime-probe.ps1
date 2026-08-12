@@ -152,10 +152,10 @@ public static class QdcProbeNative {
 }
 
 function Get-QwenWindows([int]$ProcessId) {
-    $result = @()
+    $result = New-Object System.Collections.ArrayList
     $nativeItems = [QdcProbeNative]::EnumerateProcessWindows([uint32]$ProcessId)
     foreach ($item in $nativeItems) {
-        $result += [pscustomobject]@{
+        $windowInfo = [pscustomobject]@{
             hwnd = ('0x{0:X}' -f $item.Hwnd)
             title = $item.Title
             class = $item.ClassName
@@ -170,18 +170,30 @@ function Get-QwenWindows([int]$ProcessId) {
                 bottom = $item.Bottom
             }
         }
+        [void]$result.Add($windowInfo)
     }
-    return $result
+    return $result.ToArray()
 }
 
-$qwen = @()
-Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match 'qwen' } | ForEach-Object {
-    $p = $_
+# Avoid PowerShell pipeline-based process enumeration here. Windows PowerShell 5.1 can surface
+# "Argument types do not match" from ForEach-Object when native/.NET process objects expose
+# transient or framework-specific members. Plain .NET enumeration plus foreach is more robust.
+$qwenList = New-Object System.Collections.ArrayList
+$allProcesses = [System.Diagnostics.Process]::GetProcesses()
+foreach ($p in $allProcesses) {
+    $processName = $null
+    try { $processName = $p.ProcessName } catch { continue }
+    if ([string]::IsNullOrWhiteSpace($processName) -or $processName -notmatch 'qwen') { continue }
+
     $path = $null
     $version = $null
     $signature = $null
-    $modules = @()
-    try { $path = $p.Path } catch {}
+    $mainWindowTitle = $null
+    $frameworkHintsList = New-Object System.Collections.ArrayList
+
+    try { $mainWindowTitle = $p.MainWindowTitle } catch {}
+    try { $path = $p.MainModule.FileName } catch {}
+
     if ($path) {
         try {
             $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path)
@@ -198,28 +210,51 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match
             $signature = [pscustomobject]@{ status=$sig.Status.ToString(); signer=$signer }
         } catch {}
     }
+
     try {
-        $modules = @($p.Modules | Select-Object -ExpandProperty ModuleName | Sort-Object -Unique)
+        foreach ($module in $p.Modules) {
+            $moduleName = $null
+            try { $moduleName = $module.ModuleName } catch {}
+            if ($moduleName -and $moduleName -match 'electron|chrome|cef|webview|qt|angle|v8|node') {
+                if (-not $frameworkHintsList.Contains($moduleName)) {
+                    [void]$frameworkHintsList.Add($moduleName)
+                }
+            }
+        }
     } catch {}
 
-    $qwen += [pscustomobject]@{
+    $windows = @()
+    try { $windows = @(Get-QwenWindows -ProcessId $p.Id) } catch {
+        $windows = @([pscustomobject]@{ error = $_.Exception.Message })
+    }
+
+    $entry = [pscustomobject]@{
         pid = $p.Id
-        processName = $p.ProcessName
-        mainWindowTitle = $p.MainWindowTitle
+        processName = $processName
+        mainWindowTitle = $mainWindowTitle
         executable = $path
         version = $version
         signature = $signature
-        frameworkHints = @($modules | Where-Object { $_ -match 'electron|chrome|cef|webview|qt|angle|v8|node' })
-        windows = @(Get-QwenWindows -ProcessId $p.Id)
+        frameworkHints = $frameworkHintsList.ToArray()
+        windows = $windows
     }
+    [void]$qwenList.Add($entry)
 }
+$qwen = $qwenList.ToArray()
 
-$controller = @()
-Get-Process -Name 'QwenDesktopController' -ErrorAction SilentlyContinue | ForEach-Object {
+$controllerList = New-Object System.Collections.ArrayList
+foreach ($p in [System.Diagnostics.Process]::GetProcessesByName('QwenDesktopController')) {
     $controllerPath = $null
-    try { $controllerPath = $_.Path } catch {}
-    $controller += [pscustomobject]@{ pid=$_.Id; mainWindowTitle=$_.MainWindowTitle; path=$controllerPath }
+    $controllerTitle = $null
+    try { $controllerPath = $p.MainModule.FileName } catch {}
+    try { $controllerTitle = $p.MainWindowTitle } catch {}
+    [void]$controllerList.Add([pscustomobject]@{
+        pid = $p.Id
+        mainWindowTitle = $controllerTitle
+        path = $controllerPath
+    })
 }
+$controller = $controllerList.ToArray()
 
 $osArch = $env:PROCESSOR_ARCHITECTURE
 $processArch = if ([Environment]::Is64BitProcess) { 'X64' } else { 'X86' }
