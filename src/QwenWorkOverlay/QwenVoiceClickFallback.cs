@@ -3,7 +3,12 @@ using System.Text.Json;
 
 namespace QwenWorkOverlay;
 
-public sealed record VoiceClickCalibration(double OffsetFromRight, double OffsetFromBottom, string? WindowClass, DateTimeOffset UpdatedAt);
+public sealed record VoiceClickCalibration(
+    double OffsetFromRight,
+    double OffsetFromBottom,
+    string? CoordinateSpace,
+    string? WindowClass,
+    DateTimeOffset UpdatedAt);
 
 public sealed class QwenVoiceClickFallback
 {
@@ -25,6 +30,10 @@ public sealed class QwenVoiceClickFallback
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -53,7 +62,10 @@ public sealed class QwenVoiceClickFallback
         get
         {
             if (!TryLoad(out var calibration)) return "not calibrated";
-            return $"calibrated {calibration.OffsetFromRight:0.#}px from right / {calibration.OffsetFromBottom:0.#}px from bottom";
+            var space = string.Equals(calibration.CoordinateSpace, "window-screen-v2", StringComparison.OrdinalIgnoreCase)
+                ? "window-screen"
+                : "legacy-client";
+            return $"calibrated {calibration.OffsetFromRight:0.#}px from right / {calibration.OffsetFromBottom:0.#}px from bottom ({space})";
         }
     }
 
@@ -72,26 +84,53 @@ public sealed class QwenVoiceClickFallback
             return false;
         }
 
-        if (!GetClientRect(qwenHwnd, out var client))
+        POINT screenPoint;
+        if (string.Equals(calibration.CoordinateSpace, "window-screen-v2", StringComparison.OrdinalIgnoreCase))
         {
-            diagnostic = "GetClientRect failed";
-            return false;
-        }
+            if (!GetWindowRect(qwenHwnd, out var window))
+            {
+                diagnostic = "GetWindowRect failed";
+                return false;
+            }
 
-        var width = client.Right - client.Left;
-        var height = client.Bottom - client.Top;
-        var point = ComputeClientPoint(width, height, calibration.OffsetFromRight, calibration.OffsetFromBottom);
-        if (point.X < 0 || point.Y < 0 || point.X >= width || point.Y >= height)
-        {
-            diagnostic = "saved voice calibration falls outside the current Qwen client area";
-            return false;
+            var computed = ComputeScreenPoint(
+                window.Left,
+                window.Top,
+                window.Right,
+                window.Bottom,
+                calibration.OffsetFromRight,
+                calibration.OffsetFromBottom);
+            screenPoint = new POINT { X = computed.X, Y = computed.Y };
+            if (screenPoint.X < window.Left || screenPoint.Y < window.Top || screenPoint.X >= window.Right || screenPoint.Y >= window.Bottom)
+            {
+                diagnostic = "saved voice calibration falls outside the current Qwen window";
+                return false;
+            }
         }
-
-        var screenPoint = new POINT { X = point.X, Y = point.Y };
-        if (!ClientToScreen(qwenHwnd, ref screenPoint))
+        else
         {
-            diagnostic = "ClientToScreen failed";
-            return false;
+            // Backward compatibility for the first calibration format. New calibrations should use window-screen-v2.
+            if (!GetClientRect(qwenHwnd, out var client))
+            {
+                diagnostic = "GetClientRect failed";
+                return false;
+            }
+
+            var width = client.Right - client.Left;
+            var height = client.Bottom - client.Top;
+            var point = ComputeClientPoint(width, height, calibration.OffsetFromRight, calibration.OffsetFromBottom);
+            if (point.X < 0 || point.Y < 0 || point.X >= width || point.Y >= height)
+            {
+                diagnostic = "saved legacy voice calibration falls outside the current Qwen client area";
+                return false;
+            }
+
+            screenPoint = new POINT { X = point.X, Y = point.Y };
+            if (!ClientToScreen(qwenHwnd, ref screenPoint))
+            {
+                diagnostic = "ClientToScreen failed";
+                return false;
+            }
         }
 
         var clickHwnd = WindowFromPoint(screenPoint);
@@ -132,9 +171,24 @@ public sealed class QwenVoiceClickFallback
         return (x, y);
     }
 
+    public static (int X, int Y) ComputeScreenPoint(
+        int left,
+        int top,
+        int right,
+        int bottom,
+        double offsetFromRight,
+        double offsetFromBottom)
+    {
+        _ = left;
+        _ = top;
+        var x = (int)Math.Round(right - offsetFromRight, MidpointRounding.AwayFromZero);
+        var y = (int)Math.Round(bottom - offsetFromBottom, MidpointRounding.AwayFromZero);
+        return (x, y);
+    }
+
     private bool TryLoad(out VoiceClickCalibration calibration)
     {
-        calibration = new VoiceClickCalibration(0, 0, null, DateTimeOffset.MinValue);
+        calibration = new VoiceClickCalibration(0, 0, null, null, DateTimeOffset.MinValue);
         try
         {
             if (!File.Exists(CalibrationPath)) return false;
