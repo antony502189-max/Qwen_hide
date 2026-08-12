@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private bool _allowExit;
     private bool _launchAttempted;
     private bool _voiceStartedByHotkey;
+    private bool _voiceToggleStartedByHotkey;
     private bool _resourcesDisposed;
 
     public MainWindow(SettingsService settings, AppLogger log)
@@ -59,6 +60,7 @@ public partial class MainWindow : Window
         CreateTrayIcon();
         _hotkeys = new GlobalHotkeys(HandleHotkey, _log);
         _hotkeys.RightCtrlChanged += RightCtrlChanged;
+        _hotkeys.VoiceToggleChanged += VoiceToggleChanged;
         if (!_hotkeys.AllRegistered)
             StatusText.Text = "Some global hotkeys are unavailable: " + _hotkeys.FailureSummary;
 
@@ -199,6 +201,42 @@ public partial class MainWindow : Window
                     ExitApplication();
                     return;
             }
+            UpdateStatus();
+        });
+    }
+
+    private void VoiceToggleChanged(bool active)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            EnsureAttached(allowLaunch: false);
+            if (_qwen.Target is null)
+            {
+                _voiceToggleStartedByHotkey = false;
+                Toast("Qwen is not attached");
+                return;
+            }
+
+            if (active)
+            {
+                _voiceToggleStartedByHotkey = _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
+                Toast(_voiceToggleStartedByHotkey ? "Qwen voice recording toggled ON" : _voice.State);
+            }
+            else
+            {
+                if (_voiceToggleStartedByHotkey)
+                {
+                    var stopped = _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
+                    Toast(stopped ? "Qwen voice recording toggled OFF" : _voice.State);
+                }
+                else
+                {
+                    Toast("Qwen voice toggle was not started by Controller");
+                }
+                _voiceToggleStartedByHotkey = false;
+            }
+
+            _log.Info("Ctrl+Shift+R voice toggle active=" + active + "; state=" + _voice.State);
             UpdateStatus();
         });
     }
@@ -366,7 +404,8 @@ public partial class MainWindow : Window
             $"TopMost: {_qwen.TopMost}\n" +
             $"Click-through: {_qwen.ClickThrough}\n\n" +
             $"Global hotkeys: {hotkeyState}\n" +
-            $"Right Ctrl hook: {(_hotkeys?.HookReady == true ? "READY" : "FAILED")}\n\n" +
+            $"Right Ctrl hook: {(_hotkeys?.HookReady == true ? "READY" : "FAILED")}\n" +
+            $"Ctrl+Shift+R: independent Qwen voice toggle\n\n" +
             $"Physical microphone: {_audio.MicrophoneState}\n" +
             $"System loopback: {_audio.LoopbackState}\n" +
             $"Virtual mix output: {_audio.VirtualOutputState}\n" +
@@ -376,7 +415,8 @@ public partial class MainWindow : Window
             $"Mixed frames: {_audio.MixedFrames}\n" +
             $"Qwen audio target: {_audio.InjectionState}\n" +
             $"Qwen voice automation: {_voice.State}\n" +
-            $"Matched voice control: {_voice.LastMatchedButton ?? "n/a"}\n\n" +
+            $"Matched voice control: {_voice.LastMatchedButton ?? "n/a"}\n" +
+            $"Voice click fallback: {_voice.ClickFallbackStatus}\n\n" +
             $"Capture privacy: {_capture.Status}\n" +
             $"Windows audio defaults unchanged: {defaultsSafe}\n" +
             $"Default input before: {_deviceGuard.InputBefore}\n" +
@@ -450,6 +490,14 @@ public partial class MainWindow : Window
         }
         catch { }
         _voiceStartedByHotkey = false;
+
+        try
+        {
+            if (_voiceToggleStartedByHotkey && _qwen.Target is not null)
+                _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
+        }
+        catch { }
+        _voiceToggleStartedByHotkey = false;
 
         try { _audio.Stop(); } catch { }
         try { _qwen.Dispose(); } catch { }
