@@ -15,6 +15,8 @@ if (-not $OutputPath) {
     $OutputPath = Join-Path $artifacts 'runtime-probe.json'
 }
 
+# Keep the embedded C# compatible with the legacy compiler used by Windows PowerShell 5.1.
+# In particular, avoid C# 6+ expression-bodied members here.
 if (-not ('QdcProbeNative' -as [type])) {
 Add-Type @'
 using System;
@@ -23,29 +25,74 @@ using System.Text;
 
 public static class QdcProbeNative {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr hWnd, StringBuilder text, int count);
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-    [DllImport("user32.dll", EntryPoint="GetWindowLongPtr")] public static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int index);
-    [DllImport("user32.dll", EntryPoint="GetWindowLong")] public static extern int GetWindowLong32(IntPtr hWnd, int index);
 
-    public static long GetExStyle(IntPtr hWnd) => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, -20).ToInt64() : GetWindowLong32(hWnd, -20);
-    public static string Text(IntPtr hWnd) { var b = new StringBuilder(1024); GetWindowTextW(hWnd,b,b.Capacity); return b.ToString(); }
-    public static string Class(IntPtr hWnd) { var b = new StringBuilder(512); GetClassNameW(hWnd,b,b.Capacity); return b.ToString(); }
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsZoomed(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern int GetClassNameW(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW", SetLastError=true)]
+    private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int index);
+
+    [DllImport("user32.dll", EntryPoint="GetWindowLongW", SetLastError=true)]
+    private static extern int GetWindowLong32(IntPtr hWnd, int index);
+
+    public static long GetExStyle(IntPtr hWnd) {
+        if (IntPtr.Size == 8) {
+            return GetWindowLongPtr64(hWnd, -20).ToInt64();
+        }
+        return GetWindowLong32(hWnd, -20);
+    }
+
+    public static string Text(IntPtr hWnd) {
+        StringBuilder b = new StringBuilder(1024);
+        GetWindowTextW(hWnd, b, b.Capacity);
+        return b.ToString();
+    }
+
+    public static string Class(IntPtr hWnd) {
+        StringBuilder b = new StringBuilder(512);
+        GetClassNameW(hWnd, b, b.Capacity);
+        return b.ToString();
+    }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 }
 '@
 }
 
 function Get-QwenWindows([int]$ProcessId) {
-    $items = [System.Collections.Generic.List[object]]::new()
+    $items = New-Object 'System.Collections.Generic.List[object]'
     $callback = [QdcProbeNative+EnumWindowsProc]{
         param([IntPtr]$hWnd, [IntPtr]$lParam)
         [uint32]$ownerPid = 0
@@ -114,9 +161,10 @@ Get-Process -Name 'QwenDesktopController' -ErrorAction SilentlyContinue | ForEac
 
 $result = [ordered]@{
     generatedAt = (Get-Date).ToString('o')
+    powershellVersion = $PSVersionTable.PSVersion.ToString()
     os = [Environment]::OSVersion.VersionString
-    osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-    processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+    osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
     machine = $env:COMPUTERNAME
     qwenProcesses = $qwen
     controllerProcesses = $controller
@@ -128,5 +176,6 @@ $result = [ordered]@{
 
 $result | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $OutputPath
 Write-Host "Runtime probe written to: $OutputPath"
+Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
 Write-Host "Qwen-like processes found: $($qwen.Count)"
 if ($qwen.Count -eq 0) { Write-Warning 'Open the installed Qwen Desktop app and run this probe again.' }
