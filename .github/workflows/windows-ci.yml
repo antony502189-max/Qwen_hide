@@ -33,7 +33,7 @@ jobs:
             throw 'Embedded WebView/Qwen wrapper code is forbidden in native-controller mode.'
           }
 
-      - name: PowerShell parse and runtime-probe smoke
+      - name: PowerShell 7 parse and runtime-probe smoke
         shell: pwsh
         run: |
           $parseFailures = @()
@@ -49,11 +49,24 @@ jobs:
             $parseFailures | ForEach-Object { Write-Error $_ }
             throw 'PowerShell parse validation failed.'
           }
-          $probe = Join-Path $env:RUNNER_TEMP 'qdc-runtime-probe.json'
+          $probe = Join-Path $env:RUNNER_TEMP 'qdc-runtime-probe-pwsh7.json'
           & .\scripts\runtime-probe.ps1 -OutputPath $probe
           if (-not (Test-Path $probe)) { throw 'Runtime probe did not create JSON output.' }
           $parsed = Get-Content -Raw $probe | ConvertFrom-Json
           if (-not $parsed.generatedAt) { throw 'Runtime probe JSON is malformed.' }
+
+      - name: Windows PowerShell 5.1 runtime-probe compatibility
+        shell: pwsh
+        run: |
+          $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          if (-not (Test-Path $winps)) { throw "Windows PowerShell executable not found: $winps" }
+          $probe = Join-Path $env:RUNNER_TEMP 'qdc-runtime-probe-winps51.json'
+          & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\runtime-probe.ps1 -OutputPath $probe
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell runtime probe failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path $probe)) { throw 'Windows PowerShell runtime probe did not create JSON output.' }
+          $parsed = Get-Content -Raw $probe | ConvertFrom-Json
+          if (-not $parsed.generatedAt) { throw 'Windows PowerShell runtime probe JSON is malformed.' }
+          Write-Host "Windows PowerShell compatibility probe version: $($parsed.powershellVersion)"
 
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
