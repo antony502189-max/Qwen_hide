@@ -15,45 +15,65 @@ if (-not $OutputPath) {
     $OutputPath = Join-Path $artifacts 'runtime-probe.json'
 }
 
-# Keep the embedded C# compatible with the legacy compiler used by Windows PowerShell 5.1.
-# In particular, avoid C# 6+ expression-bodied members here.
+# Keep the embedded C# compatible with the legacy CodeDOM compiler used by Windows PowerShell 5.1.
+# Window enumeration is performed entirely in C# instead of passing a PowerShell scriptblock as
+# an EnumWindows callback. The latter is unreliable on Windows PowerShell 5.1 and can fail with
+# "Argument types do not match" even though it works in PowerShell 7.
 if (-not ('QdcProbeNative' -as [type])) {
 Add-Type @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+
+public sealed class QdcWindowInfo {
+    public long Hwnd;
+    public string Title;
+    public string ClassName;
+    public bool Visible;
+    public bool Minimized;
+    public bool Maximized;
+    public long ExStyle;
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+}
 
 public static class QdcProbeNative {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    [DllImport("user32.dll", SetLastError=true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-
-    [DllImport("user32.dll", SetLastError=true)]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    private static uint _targetPid;
+    private static List<QdcWindowInfo> _windows;
 
     [DllImport("user32.dll", SetLastError=true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError=true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll", SetLastError=true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsIconic(IntPtr hWnd);
+    private static extern bool IsWindowVisible(IntPtr hWnd);
 
     [DllImport("user32.dll", SetLastError=true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsZoomed(IntPtr hWnd);
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsZoomed(IntPtr hWnd);
 
     [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
-    public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+    private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
 
     [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
-    public static extern int GetClassNameW(IntPtr hWnd, StringBuilder text, int count);
+    private static extern int GetClassNameW(IntPtr hWnd, StringBuilder text, int count);
 
     [DllImport("user32.dll", SetLastError=true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
     [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW", SetLastError=true)]
     private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int index);
@@ -61,27 +81,67 @@ public static class QdcProbeNative {
     [DllImport("user32.dll", EntryPoint="GetWindowLongW", SetLastError=true)]
     private static extern int GetWindowLong32(IntPtr hWnd, int index);
 
-    public static long GetExStyle(IntPtr hWnd) {
+    private static long GetExStyle(IntPtr hWnd) {
         if (IntPtr.Size == 8) {
             return GetWindowLongPtr64(hWnd, -20).ToInt64();
         }
         return GetWindowLong32(hWnd, -20);
     }
 
-    public static string Text(IntPtr hWnd) {
+    private static string GetText(IntPtr hWnd) {
         StringBuilder b = new StringBuilder(1024);
         GetWindowTextW(hWnd, b, b.Capacity);
         return b.ToString();
     }
 
-    public static string Class(IntPtr hWnd) {
+    private static string GetClass(IntPtr hWnd) {
         StringBuilder b = new StringBuilder(512);
         GetClassNameW(hWnd, b, b.Capacity);
         return b.ToString();
     }
 
+    private static bool CollectWindow(IntPtr hWnd, IntPtr lParam) {
+        uint ownerPid;
+        GetWindowThreadProcessId(hWnd, out ownerPid);
+        if (ownerPid != _targetPid) {
+            return true;
+        }
+
+        RECT rect;
+        GetWindowRect(hWnd, out rect);
+        QdcWindowInfo info = new QdcWindowInfo();
+        info.Hwnd = hWnd.ToInt64();
+        info.Title = GetText(hWnd);
+        info.ClassName = GetClass(hWnd);
+        info.Visible = IsWindowVisible(hWnd);
+        info.Minimized = IsIconic(hWnd);
+        info.Maximized = IsZoomed(hWnd);
+        info.ExStyle = GetExStyle(hWnd);
+        info.Left = rect.Left;
+        info.Top = rect.Top;
+        info.Right = rect.Right;
+        info.Bottom = rect.Bottom;
+        _windows.Add(info);
+        return true;
+    }
+
+    public static QdcWindowInfo[] EnumerateProcessWindows(uint processId) {
+        _targetPid = processId;
+        _windows = new List<QdcWindowInfo>();
+        EnumWindowsProc callback = new EnumWindowsProc(CollectWindow);
+        if (!EnumWindows(callback, IntPtr.Zero)) {
+            int error = Marshal.GetLastWin32Error();
+            throw new InvalidOperationException("EnumWindows failed. Win32 error: " + error.ToString());
+        }
+        QdcWindowInfo[] result = _windows.ToArray();
+        _windows = null;
+        _targetPid = 0;
+        GC.KeepAlive(callback);
+        return result;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
+    private struct RECT {
         public int Left;
         public int Top;
         public int Right;
@@ -92,29 +152,26 @@ public static class QdcProbeNative {
 }
 
 function Get-QwenWindows([int]$ProcessId) {
-    $items = New-Object 'System.Collections.Generic.List[object]'
-    $callback = [QdcProbeNative+EnumWindowsProc]{
-        param([IntPtr]$hWnd, [IntPtr]$lParam)
-        [uint32]$ownerPid = 0
-        [void][QdcProbeNative]::GetWindowThreadProcessId($hWnd, [ref]$ownerPid)
-        if ($ownerPid -eq $ProcessId) {
-            $rect = New-Object QdcProbeNative+RECT
-            [void][QdcProbeNative]::GetWindowRect($hWnd, [ref]$rect)
-            $items.Add([pscustomobject]@{
-                hwnd = ('0x{0:X}' -f $hWnd.ToInt64())
-                title = [QdcProbeNative]::Text($hWnd)
-                class = [QdcProbeNative]::Class($hWnd)
-                visible = [QdcProbeNative]::IsWindowVisible($hWnd)
-                minimized = [QdcProbeNative]::IsIconic($hWnd)
-                maximized = [QdcProbeNative]::IsZoomed($hWnd)
-                exStyle = ('0x{0:X}' -f [QdcProbeNative]::GetExStyle($hWnd))
-                rect = [pscustomobject]@{ left=$rect.Left; top=$rect.Top; right=$rect.Right; bottom=$rect.Bottom }
-            })
+    $result = @()
+    $nativeItems = [QdcProbeNative]::EnumerateProcessWindows([uint32]$ProcessId)
+    foreach ($item in $nativeItems) {
+        $result += [pscustomobject]@{
+            hwnd = ('0x{0:X}' -f $item.Hwnd)
+            title = $item.Title
+            class = $item.ClassName
+            visible = $item.Visible
+            minimized = $item.Minimized
+            maximized = $item.Maximized
+            exStyle = ('0x{0:X}' -f $item.ExStyle)
+            rect = [pscustomobject]@{
+                left = $item.Left
+                top = $item.Top
+                right = $item.Right
+                bottom = $item.Bottom
+            }
         }
-        return $true
     }
-    [void][QdcProbeNative]::EnumWindows($callback, [IntPtr]::Zero)
-    return @($items)
+    return $result
 }
 
 $qwen = @()
@@ -128,7 +185,12 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match
     if ($path) {
         try {
             $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path)
-            $version = [pscustomobject]@{ file=$vi.FileVersion; product=$vi.ProductVersion; productName=$vi.ProductName; company=$vi.CompanyName }
+            $version = [pscustomobject]@{
+                file = $vi.FileVersion
+                product = $vi.ProductVersion
+                productName = $vi.ProductName
+                company = $vi.CompanyName
+            }
         } catch {}
         try {
             $sig = Get-AuthenticodeSignature -FilePath $path
@@ -159,12 +221,17 @@ Get-Process -Name 'QwenDesktopController' -ErrorAction SilentlyContinue | ForEac
     $controller += [pscustomobject]@{ pid=$_.Id; mainWindowTitle=$_.MainWindowTitle; path=$controllerPath }
 }
 
+$osArch = $env:PROCESSOR_ARCHITECTURE
+$processArch = if ([Environment]::Is64BitProcess) { 'X64' } else { 'X86' }
+try { $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() } catch {}
+try { $processArch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString() } catch {}
+
 $result = [ordered]@{
     generatedAt = (Get-Date).ToString('o')
     powershellVersion = $PSVersionTable.PSVersion.ToString()
     os = [Environment]::OSVersion.VersionString
-    osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-    processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+    osArchitecture = $osArch
+    processArchitecture = $processArch
     machine = $env:COMPUTERNAME
     qwenProcesses = $qwen
     controllerProcesses = $controller
