@@ -7,6 +7,28 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
+# Windows PowerShell 5.1 uses the legacy CodeDOM compiler, so keep this embedded C# conservative.
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class QwenUiaProbeNative
+{
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+}
+'@
+
 $scriptDirectory = $PSScriptRoot
 $root = if ((Split-Path $scriptDirectory -Leaf) -ieq 'scripts') {
     Split-Path -Parent $scriptDirectory
@@ -60,14 +82,29 @@ function Test-Pattern($element, $pattern) {
     }
 }
 
-$rootRect = Get-SafeProperty $rootElement ([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+$uiaRootRect = Get-SafeProperty $rootElement ([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+$rootBoundsSource = 'UIAutomation'
+$rootRect = $uiaRootRect
+
+# Chromium can expose a valid root AutomationElement while temporarily omitting its bounding rectangle.
+# Falling back to Win32 GetWindowRect keeps the diagnostic useful instead of aborting before the tree scan.
 if ($null -eq $rootRect -or $rootRect.Width -le 0 -or $rootRect.Height -le 0) {
-    throw 'Qwen root bounding rectangle is unavailable.'
+    $nativeRect = New-Object QwenUiaProbeNative+RECT
+    if ([QwenUiaProbeNative]::GetWindowRect($target.MainWindowHandle, [ref]$nativeRect)) {
+        $rootRect = [pscustomobject]@{
+            X = [double]$nativeRect.Left
+            Y = [double]$nativeRect.Top
+            Width = [double]($nativeRect.Right - $nativeRect.Left)
+            Height = [double]($nativeRect.Bottom - $nativeRect.Top)
+        }
+        $rootBoundsSource = 'Win32.GetWindowRect'
+    } else {
+        throw 'Both UI Automation and Win32 root bounding rectangles are unavailable.'
+    }
 }
 
 # Probe only the lower-right composer region where send/attachment/voice controls normally live.
-# This intentionally avoids the history/sidebar and does not enumerate Text/Edit/Document controls,
-# reducing the chance of collecting chat titles, prompts, or message contents.
+# Text/Edit/Document/Hyperlink values are never collected.
 $minX = $rootRect.X + ($rootRect.Width * 0.25)
 $minY = $rootRect.Y + ($rootRect.Height * 0.50)
 
@@ -85,13 +122,20 @@ $all = $rootElement.FindAll(
     [System.Windows.Automation.Condition]::TrueCondition)
 
 $items = New-Object System.Collections.ArrayList
+$totalDescendants = $all.Count
+$boundedDescendants = 0
+$composerRegionDescendants = 0
+$allowedTypeDescendants = 0
+
 foreach ($element in $all) {
     $rect = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
     if ($null -eq $rect -or $rect.Width -le 0 -or $rect.Height -le 0) { continue }
+    $boundedDescendants++
 
     $centerX = $rect.X + ($rect.Width / 2.0)
     $centerY = $rect.Y + ($rect.Height / 2.0)
     if ($centerX -lt $minX -or $centerY -lt $minY) { continue }
+    $composerRegionDescendants++
 
     $controlType = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
     if ($null -eq $controlType) { continue }
@@ -101,6 +145,7 @@ foreach ($element in $all) {
         if ($controlType -eq $allowed) { $isAllowedType = $true; break }
     }
     if (-not $isAllowedType) { continue }
+    $allowedTypeDescendants++
 
     $hasInvoke = Test-Pattern $element ([System.Windows.Automation.InvokePattern]::Pattern)
     $hasToggle = Test-Pattern $element ([System.Windows.Automation.TogglePattern]::Pattern)
@@ -144,6 +189,9 @@ $result = [ordered]@{
     hwnd = ('0x{0:X}' -f $target.MainWindowHandle.ToInt64())
     windowTitle = $target.MainWindowTitle
     rootClassName = Get-SafeProperty $rootElement ([System.Windows.Automation.AutomationElement]::ClassNameProperty)
+    rootFrameworkId = Get-SafeProperty $rootElement ([System.Windows.Automation.AutomationElement]::FrameworkIdProperty)
+    rootBoundsSource = $rootBoundsSource
+    uiaRootBoundsAvailable = -not ($null -eq $uiaRootRect -or $uiaRootRect.Width -le 0 -or $uiaRootRect.Height -le 0)
     rootBounds = [ordered]@{
         x = $rootRect.X
         y = $rootRect.Y
@@ -155,10 +203,19 @@ $result = [ordered]@{
         minY = $minY
         description = 'Lower-right 75% width / lower 50% height composer-oriented region'
     }
+    treeStats = [ordered]@{
+        totalDescendants = $totalDescendants
+        boundedDescendants = $boundedDescendants
+        composerRegionDescendants = $composerRegionDescendants
+        allowedTypeDescendants = $allowedTypeDescendants
+        interactiveControls = $items.Count
+    }
     interactiveControls = $items.ToArray()
+    accessibilityTreeLikelyUnavailable = ($totalDescendants -eq 0 -or $boundedDescendants -eq 0)
     notes = @(
         'Only composer-area interactive/button-like UI Automation controls are collected.',
-        'Text, Edit, Document and Hyperlink controls are excluded to avoid collecting chats, prompts, message text, or history titles.'
+        'Text, Edit, Document and Hyperlink controls are excluded to avoid collecting chats, prompts, message text, or history titles.',
+        'Win32 window bounds are used only as a geometry fallback when Chromium omits the root UIA bounding rectangle.'
     )
 }
 
@@ -166,4 +223,7 @@ $result | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $OutputPath
 Write-Host "Qwen UI Automation probe written to: $OutputPath"
 Write-Host "PID: $($target.Id)"
 Write-Host "HWND: 0x$($target.MainWindowHandle.ToInt64().ToString('X'))"
+Write-Host "Root bounds source: $rootBoundsSource"
+Write-Host "UIA descendants: $totalDescendants"
+Write-Host "Composer-region descendants: $composerRegionDescendants"
 Write-Host "Composer-area interactive controls found: $($items.Count)"
