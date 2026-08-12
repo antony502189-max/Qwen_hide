@@ -14,7 +14,6 @@ public sealed class GlobalHotkeys : IDisposable
     private readonly RightCtrlStateMachine _rightCtrl = new();
     private readonly List<HotkeyRegistration> _registrations = new();
     private bool _voiceToggleActive;
-    private bool _voiceInputActive;
 
     private const int WM_HOTKEY = 0x0312;
     private const int WM_KEYDOWN = 0x0100;
@@ -52,9 +51,8 @@ public sealed class GlobalHotkeys : IDisposable
     private readonly LowLevelKeyboardProc _hookProc;
     private readonly IntPtr _hook;
 
-    // Kept for compatibility with the existing MainWindow handler. This event now represents
-    // the combined voice-record activation state: Right Ctrl hold OR Ctrl+Shift+R toggle.
     public event Action<bool>? RightCtrlChanged;
+    public event Action<bool>? VoiceToggleChanged;
     public IReadOnlyList<HotkeyRegistration> Registrations => _registrations;
     public bool HookReady => _hook != IntPtr.Zero;
     public bool AllRegistered => _registrations.All(x => x.Registered) && HookReady;
@@ -93,9 +91,7 @@ public sealed class GlobalHotkeys : IDisposable
         Register(9, "F6 Screenshot", 0, 0x75);
         Register(10, "Shift+F6 Monitor screenshot", MOD_SHIFT, 0x75);
         Register(11, "Ctrl+Alt+Esc Emergency restore/exit", MOD_CONTROL | MOD_ALT, 0x1B);
-        // A bare Ctrl+Shift chord is a Windows keyboard-layout shortcut on many systems.
-        // Ctrl+Shift+R avoids stealing that system gesture while remaining a fast record toggle.
-        Register(VoiceToggleHotkeyId, "Ctrl+Shift+R Voice record toggle", MOD_CONTROL | MOD_SHIFT, 0x52);
+        Register(VoiceToggleHotkeyId, "Ctrl+Shift+R Qwen voice toggle", MOD_CONTROL | MOD_SHIFT, 0x52);
 
         _hookProc = KeyboardHook;
         _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, GetModuleHandle(null), 0);
@@ -122,8 +118,8 @@ public sealed class GlobalHotkeys : IDisposable
             if (id == VoiceToggleHotkeyId)
             {
                 _voiceToggleActive = !_voiceToggleActive;
-                UpdateVoiceInputState();
-                _log.Info("Ctrl+Shift+R voice record toggle: " + (_voiceToggleActive ? "ON" : "OFF"));
+                VoiceToggleChanged?.Invoke(_voiceToggleActive);
+                _log.Info("Ctrl+Shift+R Qwen voice toggle: " + (_voiceToggleActive ? "ON" : "OFF"));
             }
             else
             {
@@ -141,19 +137,11 @@ public sealed class GlobalHotkeys : IDisposable
             var vk = Marshal.ReadInt32(lParam);
             if (vk == VK_RCONTROL)
             {
-                if (wParam.ToInt32() == WM_KEYDOWN && _rightCtrl.OnDown()) UpdateVoiceInputState();
-                else if (wParam.ToInt32() == WM_KEYUP && _rightCtrl.OnUp()) UpdateVoiceInputState();
+                if (wParam.ToInt32() == WM_KEYDOWN && _rightCtrl.OnDown()) RightCtrlChanged?.Invoke(true);
+                else if (wParam.ToInt32() == WM_KEYUP && _rightCtrl.OnUp()) RightCtrlChanged?.Invoke(false);
             }
         }
         return CallNextHookEx(_hook, code, wParam, lParam);
-    }
-
-    private void UpdateVoiceInputState()
-    {
-        var active = _rightCtrl.IsDown || _voiceToggleActive;
-        if (active == _voiceInputActive) return;
-        _voiceInputActive = active;
-        RightCtrlChanged?.Invoke(active);
     }
 
     public void Dispose()
