@@ -3,7 +3,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
+$scriptDirectory = $PSScriptRoot
+$root = if ((Split-Path $scriptDirectory -Leaf) -ieq 'scripts') {
+    Split-Path -Parent $scriptDirectory
+} else {
+    $scriptDirectory
+}
 if (-not $OutputPath) {
     $artifacts = Join-Path $root 'artifacts'
     New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
