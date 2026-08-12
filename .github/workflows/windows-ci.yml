@@ -61,9 +61,8 @@ jobs:
           $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           if (-not (Test-Path $winps)) { throw "Windows PowerShell executable not found: $winps" }
 
-          # The earlier compatibility smoke had no Qwen process, so the exact target branch of the
-          # probe was never executed. Launch a harmless copied ping.exe whose process name contains
-          # "Qwen" so Windows PowerShell 5.1 must exercise process metadata and native HWND handling.
+          # Launch a harmless copied ping.exe whose process name contains "Qwen" so Windows
+          # PowerShell 5.1 must exercise process metadata and native HWND handling.
           $qwenProbeExe = Join-Path $env:RUNNER_TEMP 'QwenProbe.exe'
           Copy-Item (Join-Path $env:SystemRoot 'System32\ping.exe') $qwenProbeExe -Force
           $synthetic = Start-Process -FilePath $qwenProbeExe -ArgumentList '127.0.0.1','-t' -PassThru -WindowStyle Hidden
@@ -85,6 +84,13 @@ jobs:
             if ($synthetic -and -not $synthetic.HasExited) { Stop-Process -Id $synthetic.Id -Force -ErrorAction SilentlyContinue }
           }
 
+      - name: Windows PowerShell 5.1 MSAA helper compile smoke
+        shell: pwsh
+        run: |
+          $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\qwen-msaa-probe.ps1 -CompileOnly
+          if ($LASTEXITCODE -ne 0) { throw "MSAA probe helper compile failed with exit code $LASTEXITCODE" }
+
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
 
@@ -103,7 +109,7 @@ jobs:
       - name: Package runtime probe and guides
         shell: pwsh
         run: |
-          $extras = @('runtime-probe.ps1','qwen-uia-probe.ps1','diagnose.ps1','setup-virtual-audio.ps1')
+          $extras = @('runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','diagnose.ps1','setup-virtual-audio.ps1')
           foreach ($name in $extras) { Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist' $name) -Force; Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist-single' $name) -Force }
           $docs = @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')
           foreach ($name in $docs) { Copy-Item $name (Join-Path 'dist' $name) -Force; Copy-Item $name (Join-Path 'dist-single' $name) -Force }
@@ -112,7 +118,7 @@ jobs:
         shell: pwsh
         run: |
           foreach ($dir in @('dist','dist-single')) {
-            $required = @('QwenDesktopController.exe','runtime-probe.ps1','qwen-uia-probe.ps1','diagnose.ps1','setup-virtual-audio.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
+            $required = @('QwenDesktopController.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','diagnose.ps1','setup-virtual-audio.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
             foreach ($name in $required) {
               $path = Join-Path $dir $name
               if (-not (Test-Path $path)) { throw "Required release file not found: $path" }
