@@ -1,5 +1,6 @@
 param(
-    [int]$CountdownSeconds = 5
+    [int]$CountdownSeconds = 5,
+    [switch]$CompileOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +43,10 @@ public static class QdcVoiceCalibrationNative
 '@
 
 Add-Type -TypeDefinition $source -Language CSharp
+if ($CompileOnly) {
+    Write-Host 'Qwen voice calibration helper compiled successfully.'
+    exit 0
+}
 
 $target = $null
 foreach ($process in [System.Diagnostics.Process]::GetProcessesByName('Qwen')) {
