@@ -60,15 +60,24 @@ function Test-Pattern($element, $pattern) {
     }
 }
 
-# Deliberately inspect only interactive/button-like controls. Do not enumerate Text/Edit/Document
-# elements so chat contents and prompt text are not collected by this diagnostic.
+$rootRect = Get-SafeProperty $rootElement ([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+if ($null -eq $rootRect -or $rootRect.Width -le 0 -or $rootRect.Height -le 0) {
+    throw 'Qwen root bounding rectangle is unavailable.'
+}
+
+# Probe only the lower-right composer region where send/attachment/voice controls normally live.
+# This intentionally avoids the history/sidebar and does not enumerate Text/Edit/Document controls,
+# reducing the chance of collecting chat titles, prompts, or message contents.
+$minX = $rootRect.X + ($rootRect.Width * 0.25)
+$minY = $rootRect.Y + ($rootRect.Height * 0.50)
+
 $allowedControlTypes = @(
     [System.Windows.Automation.ControlType]::Button,
     [System.Windows.Automation.ControlType]::CheckBox,
     [System.Windows.Automation.ControlType]::RadioButton,
     [System.Windows.Automation.ControlType]::MenuItem,
-    [System.Windows.Automation.ControlType]::Hyperlink,
-    [System.Windows.Automation.ControlType]::ComboBox
+    [System.Windows.Automation.ControlType]::ComboBox,
+    [System.Windows.Automation.ControlType]::Custom
 )
 
 $all = $rootElement.FindAll(
@@ -77,6 +86,13 @@ $all = $rootElement.FindAll(
 
 $items = New-Object System.Collections.ArrayList
 foreach ($element in $all) {
+    $rect = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+    if ($null -eq $rect -or $rect.Width -le 0 -or $rect.Height -le 0) { continue }
+
+    $centerX = $rect.X + ($rect.Width / 2.0)
+    $centerY = $rect.Y + ($rect.Height / 2.0)
+    if ($centerX -lt $minX -or $centerY -lt $minY) { continue }
+
     $controlType = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
     if ($null -eq $controlType) { continue }
 
@@ -84,12 +100,12 @@ foreach ($element in $all) {
     foreach ($allowed in $allowedControlTypes) {
         if ($controlType -eq $allowed) { $isAllowedType = $true; break }
     }
+    if (-not $isAllowedType) { continue }
 
     $hasInvoke = Test-Pattern $element ([System.Windows.Automation.InvokePattern]::Pattern)
     $hasToggle = Test-Pattern $element ([System.Windows.Automation.TogglePattern]::Pattern)
     $hasSelectionItem = Test-Pattern $element ([System.Windows.Automation.SelectionItemPattern]::Pattern)
-
-    if (-not $isAllowedType -and -not $hasInvoke -and -not $hasToggle -and -not $hasSelectionItem) { continue }
+    if (-not $hasInvoke -and -not $hasToggle -and -not $hasSelectionItem -and $controlType -eq [System.Windows.Automation.ControlType]::Custom) { continue }
 
     $name = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::NameProperty)
     $automationId = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::AutomationIdProperty)
@@ -97,7 +113,6 @@ foreach ($element in $all) {
     $frameworkId = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::FrameworkIdProperty)
     $enabled = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::IsEnabledProperty)
     $offscreen = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::IsOffscreenProperty)
-    $rect = Get-SafeProperty $element ([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
 
     $controlTypeName = $null
     try { $controlTypeName = $controlType.ProgrammaticName } catch { $controlTypeName = $controlType.ToString() }
@@ -113,14 +128,12 @@ foreach ($element in $all) {
         invokePattern = $hasInvoke
         togglePattern = $hasToggle
         selectionItemPattern = $hasSelectionItem
-        bounds = if ($rect) {
-            [ordered]@{
-                x = $rect.X
-                y = $rect.Y
-                width = $rect.Width
-                height = $rect.Height
-            }
-        } else { $null }
+        bounds = [ordered]@{
+            x = $rect.X
+            y = $rect.Y
+            width = $rect.Width
+            height = $rect.Height
+        }
     }
     [void]$items.Add([pscustomobject]$entry)
 }
@@ -131,10 +144,21 @@ $result = [ordered]@{
     hwnd = ('0x{0:X}' -f $target.MainWindowHandle.ToInt64())
     windowTitle = $target.MainWindowTitle
     rootClassName = Get-SafeProperty $rootElement ([System.Windows.Automation.AutomationElement]::ClassNameProperty)
+    rootBounds = [ordered]@{
+        x = $rootRect.X
+        y = $rootRect.Y
+        width = $rootRect.Width
+        height = $rootRect.Height
+    }
+    probeRegion = [ordered]@{
+        minX = $minX
+        minY = $minY
+        description = 'Lower-right 75% width / lower 50% height composer-oriented region'
+    }
     interactiveControls = $items.ToArray()
     notes = @(
-        'Only interactive/button-like UI Automation controls are collected.',
-        'Text, Edit and Document elements are deliberately excluded to avoid collecting Qwen chat or prompt contents.'
+        'Only composer-area interactive/button-like UI Automation controls are collected.',
+        'Text, Edit, Document and Hyperlink controls are excluded to avoid collecting chats, prompts, message text, or history titles.'
     )
 }
 
@@ -142,4 +166,4 @@ $result | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $OutputPath
 Write-Host "Qwen UI Automation probe written to: $OutputPath"
 Write-Host "PID: $($target.Id)"
 Write-Host "HWND: 0x$($target.MainWindowHandle.ToInt64().ToString('X'))"
-Write-Host "Interactive controls found: $($items.Count)"
+Write-Host "Composer-area interactive controls found: $($items.Count)"
