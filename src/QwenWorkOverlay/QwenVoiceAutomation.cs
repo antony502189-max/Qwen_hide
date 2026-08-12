@@ -6,18 +6,32 @@ public sealed class QwenVoiceAutomation
 {
     private const int MinimumInvokeScore = 20;
     private readonly AppLogger _log;
+    private readonly QwenVoiceClickFallback _clickFallback;
 
     public string State { get; private set; } = "Not scanned";
     public string? LastMatchedButton { get; private set; }
     public int LastMatchedScore { get; private set; }
+    public string ClickFallbackStatus => _clickFallback.Status;
 
-    public QwenVoiceAutomation(AppLogger log) => _log = log;
+    public QwenVoiceAutomation(AppLogger log)
+    {
+        _log = log;
+        _clickFallback = new QwenVoiceClickFallback(log);
+    }
 
     public bool TryInvokeVoiceButton(IntPtr qwenHwnd)
     {
         if (!TryFindCandidate(qwenHwnd, out var candidate, out var diagnostic))
         {
-            State = diagnostic;
+            if (_clickFallback.TryInvoke(qwenHwnd, out var clickDiagnostic))
+            {
+                LastMatchedButton = "calibrated composer click";
+                LastMatchedScore = 0;
+                State = "Voice toggled through calibrated click fallback";
+                return true;
+            }
+
+            State = diagnostic + "; " + clickDiagnostic;
             return false;
         }
 
@@ -62,9 +76,11 @@ public sealed class QwenVoiceAutomation
     {
         if (!TryFindCandidate(qwenHwnd, out var candidate, out var diagnostic))
         {
-            State = diagnostic;
             LastMatchedButton = null;
             LastMatchedScore = 0;
+            State = _clickFallback.HasCalibration
+                ? diagnostic + "; calibrated click fallback READY"
+                : diagnostic + "; calibrated click fallback not configured";
             return;
         }
 
