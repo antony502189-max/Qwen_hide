@@ -20,18 +20,23 @@ public static class QdcVoiceCalibrationNative
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(out POINT point);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
 
     public static string WindowClass(IntPtr hwnd)
     {
@@ -62,57 +67,73 @@ if ($null -eq $target) {
 }
 
 $hwnd = $target.MainWindowHandle
-$rect = New-Object QdcVoiceCalibrationNative+RECT
-if (-not [QdcVoiceCalibrationNative]::GetClientRect($hwnd, [ref]$rect)) {
-    throw 'GetClientRect failed.'
+$previousDpi = [IntPtr]::Zero
+try {
+    # Force this thread into the same physical-pixel coordinate space used by modern Chromium windows.
+    # This avoids the Win10 DPI virtualization mismatch that can make GetCursorPos and client coordinates disagree.
+    $previousDpi = [QdcVoiceCalibrationNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
+
+    $rect = New-Object QdcVoiceCalibrationNative+RECT
+    if (-not [QdcVoiceCalibrationNative]::GetWindowRect($hwnd, [ref]$rect)) {
+        throw 'GetWindowRect failed.'
+    }
+
+    Write-Host ''
+    Write-Host 'VOICE CLICK CALIBRATION' -ForegroundColor Cyan
+    Write-Host 'Move the mouse pointer directly onto the CENTER of the microphone/voice button in Qwen.'
+    Write-Host 'Do not click. Keep the pointer there until the countdown finishes.'
+    Write-Host 'If PowerShell covers the Qwen microphone button, move this PowerShell window aside first.'
+    Write-Host ''
+    for ($i = [Math]::Max(1, $CountdownSeconds); $i -ge 1; $i--) {
+        Write-Host ("Capturing in {0}..." -f $i)
+        Start-Sleep -Seconds 1
+    }
+
+    $cursor = New-Object QdcVoiceCalibrationNative+POINT
+    if (-not [QdcVoiceCalibrationNative]::GetCursorPos([ref]$cursor)) {
+        throw 'GetCursorPos failed.'
+    }
+
+    if ($cursor.X -lt $rect.Left -or $cursor.X -ge $rect.Right -or $cursor.Y -lt $rect.Top -or $cursor.Y -ge $rect.Bottom) {
+        throw ("The mouse pointer was outside the Qwen window when calibration was captured. Cursor=({0},{1}), Qwen=({2},{3})-({4},{5}). Run again and keep the pointer on the microphone button." -f $cursor.X,$cursor.Y,$rect.Left,$rect.Top,$rect.Right,$rect.Bottom)
+    }
+
+    # Also verify the topmost window under the cursor belongs to Qwen; this catches a PowerShell/overlay window covering Qwen.
+    $under = [QdcVoiceCalibrationNative]::WindowFromPoint($cursor)
+    $rootUnder = if ($under -ne [IntPtr]::Zero) { [QdcVoiceCalibrationNative]::GetAncestor($under, 2) } else { [IntPtr]::Zero }
+    if ($rootUnder -ne $hwnd) {
+        throw ("The pointer coordinates are inside Qwen, but another window is covering that point (root HWND 0x{0:X}). Move PowerShell/other windows away from the microphone button and run calibration again." -f $rootUnder.ToInt64())
+    }
+
+    $offsetRight = [double]($rect.Right - $cursor.X)
+    $offsetBottom = [double]($rect.Bottom - $cursor.Y)
+    $windowClass = [QdcVoiceCalibrationNative]::WindowClass($hwnd)
+
+    $root = Join-Path $env:LOCALAPPDATA 'QwenDesktopController'
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $path = Join-Path $root 'voice-calibration.json'
+
+    $result = [ordered]@{
+        OffsetFromRight = $offsetRight
+        OffsetFromBottom = $offsetBottom
+        CoordinateSpace = 'window-screen-v2'
+        WindowClass = $windowClass
+        UpdatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    $result | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path $path
+
+    Write-Host ''
+    Write-Host 'Calibration saved.' -ForegroundColor Green
+    Write-Host ("Qwen PID: {0}" -f $target.Id)
+    Write-Host ("HWND: 0x{0:X}" -f $hwnd.ToInt64())
+    Write-Host ("Cursor screen point: x={0}, y={1}" -f $cursor.X, $cursor.Y)
+    Write-Host ("Qwen window rect: left={0}, top={1}, right={2}, bottom={3}" -f $rect.Left,$rect.Top,$rect.Right,$rect.Bottom)
+    Write-Host ("Offsets: right={0}px, bottom={1}px" -f $offsetRight, $offsetBottom)
+    Write-Host ("Saved to: {0}" -f $path)
+    Write-Host 'No chat text, prompt text, credentials, cookies, audio, or screenshots were collected.'
 }
-
-Write-Host ''
-Write-Host 'VOICE CLICK CALIBRATION' -ForegroundColor Cyan
-Write-Host 'Move the mouse pointer directly onto the CENTER of the microphone/voice button in Qwen.'
-Write-Host 'Do not click. Keep the pointer there until the countdown finishes.'
-Write-Host ''
-for ($i = [Math]::Max(1, $CountdownSeconds); $i -ge 1; $i--) {
-    Write-Host ("Capturing in {0}..." -f $i)
-    Start-Sleep -Seconds 1
+finally {
+    if ($previousDpi -ne [IntPtr]::Zero) {
+        [void][QdcVoiceCalibrationNative]::SetThreadDpiAwarenessContext($previousDpi)
+    }
 }
-
-$screen = New-Object QdcVoiceCalibrationNative+POINT
-if (-not [QdcVoiceCalibrationNative]::GetCursorPos([ref]$screen)) {
-    throw 'GetCursorPos failed.'
-}
-$client = $screen
-if (-not [QdcVoiceCalibrationNative]::ScreenToClient($hwnd, [ref]$client)) {
-    throw 'ScreenToClient failed.'
-}
-
-$width = $rect.Right - $rect.Left
-$height = $rect.Bottom - $rect.Top
-if ($client.X -lt 0 -or $client.Y -lt 0 -or $client.X -ge $width -or $client.Y -ge $height) {
-    throw 'The mouse pointer was not inside the Qwen client area when calibration was captured.'
-}
-
-$offsetRight = [double]($width - $client.X)
-$offsetBottom = [double]($height - $client.Y)
-$windowClass = [QdcVoiceCalibrationNative]::WindowClass($hwnd)
-
-$root = Join-Path $env:LOCALAPPDATA 'QwenDesktopController'
-New-Item -ItemType Directory -Force -Path $root | Out-Null
-$path = Join-Path $root 'voice-calibration.json'
-
-$result = [ordered]@{
-    OffsetFromRight = $offsetRight
-    OffsetFromBottom = $offsetBottom
-    WindowClass = $windowClass
-    UpdatedAt = (Get-Date).ToUniversalTime().ToString('o')
-}
-$result | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path $path
-
-Write-Host ''
-Write-Host 'Calibration saved.' -ForegroundColor Green
-Write-Host ("Qwen PID: {0}" -f $target.Id)
-Write-Host ("HWND: 0x{0:X}" -f $hwnd.ToInt64())
-Write-Host ("Client point: x={0}, y={1}" -f $client.X, $client.Y)
-Write-Host ("Offsets: right={0}px, bottom={1}px" -f $offsetRight, $offsetBottom)
-Write-Host ("Saved to: {0}" -f $path)
-Write-Host 'No chat text, prompt text, credentials, cookies, audio, or screenshots were collected.'
