@@ -212,7 +212,7 @@ If `Right Ctrl audio` is enabled in Settings:
 - While held, the mix is rendered only to the configured recognized virtual endpoint.
 - Right Ctrl UP stops the mixer.
 
-Right Ctrl never toggles Qwen voice recording. `Ctrl+Shift+R` is the separate dedicated voice toggle. It invokes only the real Qwen window through the saved calibrated fallback after visibility, geometry, ownership and child-window checks.
+Right Ctrl never toggles Qwen voice recording. `Ctrl+Shift+R` is the separate dedicated voice toggle. When a valid saved calibration exists, it deliberately skips the known-empty UI Automation discovery and invokes only the real Qwen window through the calibrated fallback after visibility, geometry, ownership and child-window checks.
 
 No fake Qwen voice UI is created. If the calibrated fallback cannot be verified, it fails safely and use Qwen's normal microphone button manually.
 

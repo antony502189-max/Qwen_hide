@@ -21,7 +21,9 @@ public sealed class QwenVoiceAutomation
 
     public bool TryInvokeVoiceButton(IntPtr qwenHwnd)
     {
-        if (!TryFindCandidate(qwenHwnd, out var candidate, out var diagnostic))
+        // This Qwen build has a known-empty UIA/MSAA composer tree. Prefer the validated
+        // geometry-relative calibration when it exists, instead of repeatedly rescanning it.
+        if (_clickFallback.HasCalibration)
         {
             if (_clickFallback.TryInvoke(qwenHwnd, out var clickDiagnostic))
             {
@@ -31,7 +33,13 @@ public sealed class QwenVoiceAutomation
                 return true;
             }
 
-            State = diagnostic + "; " + clickDiagnostic;
+            State = clickDiagnostic;
+            return false;
+        }
+
+        if (!TryFindCandidate(qwenHwnd, out var candidate, out var diagnostic))
+        {
+            State = diagnostic + "; calibrated click fallback not configured";
             return false;
         }
 
@@ -74,13 +82,19 @@ public sealed class QwenVoiceAutomation
 
     public void Probe(IntPtr qwenHwnd)
     {
+        if (_clickFallback.HasCalibration)
+        {
+            LastMatchedButton = "calibrated composer click";
+            LastMatchedScore = 0;
+            State = "UI Automation discovery skipped; calibrated click fallback READY";
+            return;
+        }
+
         if (!TryFindCandidate(qwenHwnd, out var candidate, out var diagnostic))
         {
             LastMatchedButton = null;
             LastMatchedScore = 0;
-            State = _clickFallback.HasCalibration
-                ? diagnostic + "; calibrated click fallback READY"
-                : diagnostic + "; calibrated click fallback not configured";
+            State = diagnostic + "; calibrated click fallback not configured";
             return;
         }
 
