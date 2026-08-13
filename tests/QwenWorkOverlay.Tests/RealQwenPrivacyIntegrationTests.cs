@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Windows.Threading;
 using Xunit;
 
@@ -74,6 +75,8 @@ public sealed class RealQwenPrivacyIntegrationTests
             Assert.NotEqual(CaptureProbeVerdict.NotRun, gdiProbe.Verdict);
             Assert.NotEqual(CaptureProbeVerdict.Failed, gdiProbe.Verdict);
 
+            RunOptionalDesktopDuplicationProbe(logger, controller.PrivacyHostHwnd);
+
             // Exercise the same restoration path used if the controller-owned host disappears.
             // This validates that Qwen cannot remain parented to a dead host and that the controller
             // invalidates its old mutation lease afterwards.
@@ -126,5 +129,27 @@ public sealed class RealQwenPrivacyIntegrationTests
         };
         timer.Start();
         Dispatcher.PushFrame(frame);
+    }
+
+    private static void RunOptionalDesktopDuplicationProbe(AppLogger logger, IntPtr hostHwnd)
+    {
+        var probe = Environment.GetEnvironmentVariable("QDC_DESKTOP_DUPLICATION_PROBE");
+        if (string.IsNullOrWhiteSpace(probe)) return;
+        Assert.True(File.Exists(probe), "Configured Desktop Duplication probe does not exist: " + probe);
+        using var process = Process.Start(new ProcessStartInfo(probe, "0x" + hostHwnd.ToInt64().ToString("X"))
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        });
+        Assert.NotNull(process);
+        Assert.True(process!.WaitForExit(10000), "Desktop Duplication probe timed out.");
+        var output = process.StandardOutput.ReadToEnd().Trim();
+        var error = process.StandardError.ReadToEnd().Trim();
+        logger.Info("Privacy Desktop Duplication probe: " + output);
+        Assert.Equal(0, process.ExitCode);
+        Assert.StartsWith("RESULT DesktopDuplication=", output);
+        Assert.True(string.IsNullOrWhiteSpace(error), "Desktop Duplication probe stderr: " + error);
     }
 }

@@ -102,6 +102,7 @@ public enum CaptureProbeVerdict
 {
     NotRun,
     LikelyExcluded,
+    RedactedPlaceholder,
     Exposed,
     Inconclusive,
     Failed
@@ -117,6 +118,7 @@ public static class CaptureProbePolicy
             return CaptureProbeVerdict.Failed;
         if (visibleVariance < 6 && hiddenVariance < 6) return CaptureProbeVerdict.Inconclusive;
         if (meanRgbDifference <= 4) return CaptureProbeVerdict.LikelyExcluded;
+        if (visibleVariance < 6 && hiddenVariance >= 6 && meanRgbDifference >= 18) return CaptureProbeVerdict.RedactedPlaceholder;
         if (meanRgbDifference >= 18) return CaptureProbeVerdict.Exposed;
         return CaptureProbeVerdict.Inconclusive;
     }

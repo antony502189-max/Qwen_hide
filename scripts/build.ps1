@@ -6,6 +6,7 @@ $solution = Join-Path $root 'QwenWorkOverlay.sln'
 $project = Join-Path $root 'src\QwenWorkOverlay\QwenWorkOverlay.csproj'
 $dist = Join-Path $root 'dist'
 $distSingle = Join-Path $root 'dist-single'
+$privacyProbe = Join-Path $root 'tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe'
 
 function Invoke-Dotnet([string[]]$arguments, [string]$operation) {
     & $dotnet @arguments
@@ -15,6 +16,9 @@ function Invoke-Dotnet([string[]]$arguments, [string]$operation) {
 Invoke-Dotnet -arguments @('restore', $solution) -operation 'Restore solution'
 Invoke-Dotnet -arguments @('build', $solution, '-c', 'Release', '--no-restore') -operation 'Build solution'
 Invoke-Dotnet -arguments @('test', $solution, '-c', 'Release', '--no-build') -operation 'Test solution'
+
+& (Join-Path $PSScriptRoot 'build-privacy-capture-probe.ps1') -OutputPath $privacyProbe
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $privacyProbe)) { throw 'Build Desktop Duplication privacy probe failed.' }
 
 foreach ($directory in @($dist, $distSingle)) {
     if (Test-Path $directory) { Remove-Item $directory -Recurse -Force }
@@ -40,6 +44,7 @@ function Add-ReleaseExtras([string]$destination) {
     foreach ($name in @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')) {
         Copy-Item (Join-Path $root $name) (Join-Path $destination $name) -Force
     }
+    Copy-Item $privacyProbe (Join-Path $destination 'privacy-capture-probe.exe') -Force
 
     $exe = Join-Path $destination 'QwenDesktopController.exe'
     if (-not (Test-Path $exe)) { throw "Publish completed but executable was not found: $exe" }

@@ -216,6 +216,7 @@ public class CoreTests
     [InlineData(35, 30, 30, CaptureProbeVerdict.Exposed)]
     [InlineData(8, 30, 30, CaptureProbeVerdict.Inconclusive)]
     [InlineData(2, 1, 1, CaptureProbeVerdict.Inconclusive)]
+    [InlineData(30, 1, 40, CaptureProbeVerdict.RedactedPlaceholder)]
     public void Gdi_capture_probe_policy_never_turns_weak_evidence_into_a_privacy_pass(
         double difference, double visibleVariance, double hiddenVariance, CaptureProbeVerdict expected)
     {

@@ -36,7 +36,9 @@ Before Qwen changes parent, the recovery journal durably records and verifies it
 
 `Privacy host ON` means the host affinity was genuinely set and read back. It does **not** mean every capture product honors it. The controller cannot certify full-monitor sharing in Teams, Zoom, Google Meet, or Yandex Telemost without observing each product's shared output. Treat an application as unsupported until it passes the manual matrix in `MANUAL_TEST_CHECKLIST_EN.md`.
 
-The optional **Validate GDI Capture** action is a bounded 96×96 on-screen comparison while the active host is visible and briefly hidden. It stores only aggregate pixel statistics, not images. Its result is explicitly limited to legacy GDI screen copying: `LikelyExcluded`, `Exposed`, and `Inconclusive` never establish behavior for Desktop Duplication, Windows Graphics Capture, or conferencing software.
+The optional **Validate GDI Capture** action samples four bounded patches while the active host is visible and briefly hidden. It stores only aggregate pixel statistics, not images. Its result is explicitly limited to legacy GDI screen copying. `LikelyExcluded` means the sampled surface matched its background; `RedactedPlaceholder` means content was redacted but the host was not proven absent; `Exposed` means host content was captured. None establishes behavior for Desktop Duplication, Windows Graphics Capture, or conferencing software.
+
+The packaged `privacy-capture-probe.exe` exercises **Desktop Duplication** with the same bounded aggregate-pixel method. Enable Privacy Host, copy its host HWND from Diagnostics, then run `privacy-capture-probe.exe 0xHOSTHWND` from the release folder. It prints a single result line and briefly hides/restores the host; it creates no screenshots or files. `RedactedPlaceholder` protects Qwen content but is still not proof that the host is absent from a full-monitor share.
 
 ## 4. Requirements
 
@@ -308,9 +310,9 @@ The controller intentionally refuses to render the mix to a normal physical spea
 
 Open Diagnostics. If Qwen does not expose an accessible microphone/voice button, start Qwen Voice manually. The audio mixer can still work independently.
 
-### Capture privacy says unsupported
+### Capture privacy is not a full-share pass
 
-That is intentional in the safe native architecture. The controller does not own the Qwen HWND and therefore does not fake `WDA_EXCLUDEFROMCAPTURE` success.
+The controller never fakes affinity on Qwen's foreign HWND: privacy mode applies and verifies it only on the controller-owned host. A verified host is still not proof that a particular capture API or conferencing product excludes it. On the target machine GDI is **Exposed** and Desktop Duplication is **RedactedPlaceholder**; validate Windows Graphics Capture and each full-monitor share application separately.
 
 ## 20. Building from source
 

@@ -10,6 +10,7 @@ artifacts/
 *.user
 *.suo
 *.cache
+*.obj
 *.tmp
 *.log
 TestResults/

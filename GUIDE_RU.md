@@ -167,19 +167,15 @@ Controller намеренно не переписывает глобальный
 
 Если default endpoints отличаются — audio-функцию нельзя считать принятой до выяснения причины.
 
-## Capture Privacy — важное ограничение
+## Capture Privacy — экспериментальный host с честной проверкой
 
-Окно установленного Qwen принадлежит процессу Qwen, а не helper-процессу controller. Поэтому безопасная native-архитектура **не изображает**, будто `WDA_EXCLUDEFROMCAPTURE` успешно применяется к чужому HWND.
+Верхнеуровневое окно установленного Qwen принадлежит процессу Qwen. Controller **никогда** не вызывает `SetWindowDisplayAffinity` для этого чужого HWND. Команда **Toggle Privacy Host** создаёт обычное верхнеуровневое окно, принадлежащее Controller, применяет к нему `WDA_EXCLUDEFROMCAPTURE`, сразу читает состояние через `GetWindowDisplayAffinity` и только затем делает реальное окно Qwen дочерним.
 
-Статус в Diagnostics:
+До изменения parent на диске сохраняются и проверяются исходные parent, style/ex-style, `WINDOWPLACEMENT`, видимость, minimized/maximized, TopMost, DPI и DPI-awareness context. Режим не включится без DWM composition, совпадающих DPI/context, подтверждённого affinity и проверенного `SetParent`; любой сбой откатывает Qwen. `Ctrl+Alt+Esc`, штатное завершение и восстановление после сбоя используют тот же journal.
 
-```text
-Capture privacy: UNSUPPORTED ...
-```
+`Privacy host ON` означает только то, что affinity controller-owned host действительно установлен и прочитан обратно. Это **не** сертификат для любого capture pipeline. На целевой машине GDI screen copy показал `Exposed`; Desktop Duplication показал `RedactedPlaceholder` — содержимое Qwen не наблюдалось, но host не доказанно отсутствует. Windows Graphics Capture и full-monitor share в Teams, Zoom, Google Meet и Yandex Telemost ещё требуют отдельного наблюдения.
 
-Это намеренно. Controller не инжектит DLL в Qwen, не патчит `Qwen.exe` и не заменяет его WebView-клоном ради зелёного статуса.
-
-При демонстрации лучше выбирать конкретное рабочее окно приложения, если conferencing software это позволяет. Полноэкранный захват нельзя считать защищённым без реального теста конкретного capture pipeline.
+Из папки release можно запустить `privacy-capture-probe.exe 0xHOSTHWND` (HWND берётся из Diagnostics): probe проверяет Desktop Duplication только по агрегированным пиксельным статистикам, кратко скрывает/восстанавливает host и не сохраняет screenshots или chat data. Результаты разных API нельзя переносить друг на друга.
 
 ## Runtime probe именно твоего Qwen
 

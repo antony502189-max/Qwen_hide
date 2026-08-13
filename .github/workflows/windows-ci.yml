@@ -96,6 +96,14 @@ jobs:
           & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\calibrate-qwen-voice-click.ps1 -CompileOnly
           if ($LASTEXITCODE -ne 0) { throw "Voice calibration helper compile failed with exit code $LASTEXITCODE" }
 
+      - name: Windows PowerShell 5.1 Desktop Duplication privacy probe build
+        shell: pwsh
+        run: |
+          $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\build-privacy-capture-probe.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Desktop Duplication privacy probe compilation failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path .\tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe)) { throw 'Privacy capture probe executable was not created.' }
+
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
 
@@ -118,12 +126,15 @@ jobs:
           foreach ($name in $extras) { Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist' $name) -Force; Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist-single' $name) -Force }
           $docs = @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')
           foreach ($name in $docs) { Copy-Item $name (Join-Path 'dist' $name) -Force; Copy-Item $name (Join-Path 'dist-single' $name) -Force }
+          $probe = '.\tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe'
+          Copy-Item $probe (Join-Path 'dist' 'privacy-capture-probe.exe') -Force
+          Copy-Item $probe (Join-Path 'dist-single' 'privacy-capture-probe.exe') -Force
 
       - name: Verify release payloads and generate hashes
         shell: pwsh
         run: |
           foreach ($dir in @('dist','dist-single')) {
-            $required = @('QwenDesktopController.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
+            $required = @('QwenDesktopController.exe','privacy-capture-probe.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
             foreach ($name in $required) {
               $path = Join-Path $dir $name
               if (-not (Test-Path $path)) { throw "Required release file not found: $path" }
