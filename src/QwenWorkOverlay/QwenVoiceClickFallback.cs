@@ -49,6 +49,14 @@ public sealed class QwenVoiceClickFallback
     [DllImport("user32.dll")]
     private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PostMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -78,6 +86,12 @@ public sealed class QwenVoiceClickFallback
             return false;
         }
 
+        if (IsIconic(qwenHwnd) || !IsWindowVisible(qwenHwnd))
+        {
+            diagnostic = "Qwen window is minimized/hidden; show Qwen before using the voice toggle";
+            return false;
+        }
+
         if (!TryLoad(out var calibration))
         {
             diagnostic = "voice click fallback is not calibrated";
@@ -90,6 +104,12 @@ public sealed class QwenVoiceClickFallback
             if (!GetWindowRect(qwenHwnd, out var window))
             {
                 diagnostic = "GetWindowRect failed";
+                return false;
+            }
+
+            if ((window.Left <= -30000 && window.Top <= -30000) || window.Right <= window.Left || window.Bottom <= window.Top)
+            {
+                diagnostic = "Qwen window geometry is unusable (likely minimized)";
                 return false;
             }
 
@@ -109,7 +129,6 @@ public sealed class QwenVoiceClickFallback
         }
         else
         {
-            // Backward compatibility for the first calibration format. New calibrations should use window-screen-v2.
             if (!GetClientRect(qwenHwnd, out var client))
             {
                 diagnostic = "GetClientRect failed";
