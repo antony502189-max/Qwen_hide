@@ -218,6 +218,7 @@ public sealed class QwenWindowController : IDisposable
     public uint QwenDpi => _privacy.QwenDpi;
     public IntPtr HostDpiAwarenessContext => _privacy.HostDpiAwarenessContext;
     public IntPtr QwenDpiAwarenessContext => _privacy.QwenDpiAwarenessContext;
+    public bool DwmCompositionEnabled => _privacy.DwmCompositionEnabled;
     public CapturePathProbeResult GdiCaptureProbe => _privacy.GdiProbe;
 
     public bool RecoverStaleState() => _recovery.TryRecoverStaleState();

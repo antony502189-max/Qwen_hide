@@ -151,6 +151,9 @@ internal static class Native
     [DllImport("user32.dll")]
     public static extern int GetAwarenessFromDpiAwarenessContext(IntPtr value);
 
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmIsCompositionEnabled([MarshalAs(UnmanagedType.Bool)] out bool enabled);
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
@@ -213,6 +216,13 @@ internal static class Native
         2 => "PerMonitorAware",
         _ => context == IntPtr.Zero ? "Unavailable" : "Unknown"
     };
+
+    public static bool IsDesktopCompositionEnabled()
+    {
+        try { return DwmIsCompositionEnabled(out var enabled) >= 0 && enabled; }
+        catch (DllNotFoundException) { return false; }
+        catch (EntryPointNotFoundException) { return false; }
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT

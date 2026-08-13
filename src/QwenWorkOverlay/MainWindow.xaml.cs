@@ -429,6 +429,7 @@ public partial class MainWindow : Window
             $"Qwen current parent: {FormatHwnd(_qwen.CurrentParent)}\n" +
             $"WDA requested: 0x{_qwen.RequestedAffinity:X}\n" +
             $"WDA verified: 0x{_qwen.VerifiedAffinity:X}\n" +
+            $"DWM composition: {_qwen.DwmCompositionEnabled}\n" +
             $"Controller DPI: {controllerDpi}\n" +
             $"Controller DPI awareness: {controllerDpiAwareness}\n" +
             $"Host DPI: {_qwen.HostDpi}\n" +

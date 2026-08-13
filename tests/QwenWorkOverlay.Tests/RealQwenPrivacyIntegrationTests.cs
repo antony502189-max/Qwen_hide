@@ -66,6 +66,7 @@ public sealed class RealQwenPrivacyIntegrationTests
             Assert.Equal(controller.PrivacyHostHwnd, controller.CurrentParent);
             Assert.Equal(Native.WDA_EXCLUDEFROMCAPTURE, controller.RequestedAffinity);
             Assert.Equal(Native.WDA_EXCLUDEFROMCAPTURE, controller.VerifiedAffinity);
+            Assert.True(controller.DwmCompositionEnabled);
             Assert.True(PrivacyHostPolicy.IsDpiCompatible(controller.HostDpi, controller.QwenDpi));
             Assert.True(PrivacyHostPolicy.IsDpiAwarenessCompatible(controller.HostDpiAwarenessContext, controller.QwenDpiAwarenessContext));
 

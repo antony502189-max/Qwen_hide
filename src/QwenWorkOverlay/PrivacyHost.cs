@@ -72,6 +72,7 @@ internal sealed class PrivacyHostSession : IDisposable
     public uint VerifiedAffinity { get; private set; }
     public uint HostDpi { get; private set; }
     public uint QwenDpi { get; private set; }
+    public bool DwmCompositionEnabled { get; private set; }
     public IntPtr HostDpiAwarenessContext { get; private set; }
     public IntPtr QwenDpiAwarenessContext { get; private set; }
     public CapturePathProbeResult GdiProbe { get; private set; } = CapturePathProbeResult.NotRun;
@@ -104,6 +105,9 @@ internal sealed class PrivacyHostSession : IDisposable
             _host.Show();
             var hostHwnd = _host.Hwnd;
             if (hostHwnd == IntPtr.Zero || !Native.IsWindow(hostHwnd)) return Fail("Privacy host HWND was not created");
+
+            DwmCompositionEnabled = Native.IsDesktopCompositionEnabled();
+            if (!DwmCompositionEnabled) return Fail("Desktop Window Manager composition is unavailable; capture affinity cannot be trusted");
 
             HostDpi = Native.GetDpiForWindow(hostHwnd);
             if (!PrivacyHostPolicy.IsDpiCompatible(HostDpi, QwenDpi))
@@ -171,6 +175,7 @@ internal sealed class PrivacyHostSession : IDisposable
         VerifiedAffinity = Native.WDA_NONE;
         HostDpi = 0;
         QwenDpi = 0;
+        DwmCompositionEnabled = false;
         HostDpiAwarenessContext = IntPtr.Zero;
         QwenDpiAwarenessContext = IntPtr.Zero;
         GdiProbe = CapturePathProbeResult.NotRun;
