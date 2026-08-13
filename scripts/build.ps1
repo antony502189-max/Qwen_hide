@@ -34,7 +34,7 @@ for ($attempt = 1; $attempt -le 3; $attempt++) {
 if (-not $singlePublished) { throw 'Publish single-file win-x64 failed after 3 attempts.' }
 
 function Add-ReleaseExtras([string]$destination) {
-    foreach ($name in @('runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1')) {
+    foreach ($name in @('runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1','measure-qwen-observational-performance.ps1')) {
         Copy-Item (Join-Path $root "scripts\$name") (Join-Path $destination $name) -Force
     }
     foreach ($name in @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')) {

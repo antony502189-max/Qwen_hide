@@ -114,7 +114,7 @@ jobs:
       - name: Package runtime probe and guides
         shell: pwsh
         run: |
-          $extras = @('runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1')
+          $extras = @('runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1','measure-qwen-observational-performance.ps1')
           foreach ($name in $extras) { Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist' $name) -Force; Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist-single' $name) -Force }
           $docs = @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')
           foreach ($name in $docs) { Copy-Item $name (Join-Path 'dist' $name) -Force; Copy-Item $name (Join-Path 'dist-single' $name) -Force }
@@ -123,7 +123,7 @@ jobs:
         shell: pwsh
         run: |
           foreach ($dir in @('dist','dist-single')) {
-            $required = @('QwenDesktopController.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
+            $required = @('QwenDesktopController.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1','measure-qwen-observational-performance.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
             foreach ($name in $required) {
               $path = Join-Path $dir $name
               if (-not (Test-Path $path)) { throw "Required release file not found: $path" }

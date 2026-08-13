@@ -71,4 +71,6 @@ This writes `artifacts\runtime-probe.json` without collecting chat text, Clipboa
 
 Windows CI rejects any reintroduced WebView2 Qwen wrapper, then performs restore, Release build, automated tests, self-contained win-x64 publish, release-payload verification, SHA-256 generation, and artifact upload. Automated tests include real Win32 HWND recovery; real-Qwen mutation tests are opt-in and never run in CI.
 
+For a target-machine P0 check, run `measure-qwen-observational-performance.ps1` from the release folder. It records Qwen CPU and responsiveness before and during an observational-only controller attachment, refuses to run with a recovery journal, and writes `qwen-observational-performance.json` under `%LOCALAPPDATA%\QwenDesktopController`.
+
 See [GUIDE_EN.md](GUIDE_EN.md), [GUIDE_RU.md](GUIDE_RU.md) and [MANUAL_TEST_CHECKLIST_EN.md](MANUAL_TEST_CHECKLIST_EN.md).
