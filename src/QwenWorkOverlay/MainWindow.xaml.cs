@@ -502,9 +502,7 @@ public partial class MainWindow : Window
         }
         var enabled = _qwen.PrivacyState == CapturePrivacyState.Enabled;
         var ok = enabled ? _qwen.DisablePrivacyHost() : _qwen.EnablePrivacyHost();
-        Toast(ok
-            ? (enabled ? "Privacy host OFF; Qwen restored" : "Privacy host ON; WDA verified")
-            : _qwen.PrivacyStatus);
+        Toast(ok ? (enabled ? "Privacy host OFF; Qwen restored" : _qwen.PrivacyStatus) : _qwen.PrivacyStatus);
         UpdateStatus();
     }
 

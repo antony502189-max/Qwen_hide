@@ -147,7 +147,7 @@ internal sealed class PrivacyHostSession : IDisposable
             GdiProbe = CapturePathProbeResult.NotRun;
             DesktopDuplicationProbe = NativeCaptureProbeResult.NotRun;
             WindowsGraphicsCaptureProbe = NativeCaptureProbeResult.NotRun;
-            Status = "ON (host affinity verified; capture compatibility still requires per-pipeline validation)";
+            Status = "ACTIVE — host WDA verified; capture exclusion is not yet validated";
             _log.Info($"Privacy host enabled: host=0x{hostHwnd.ToInt64():X}, qwen=0x{target.Hwnd.ToInt64():X}, dpi={HostDpi}, dpiAwareness={Native.DescribeDpiAwarenessContext(HostDpiAwarenessContext)}, affinity=0x{affinity:X}");
             return true;
         }
@@ -167,6 +167,7 @@ internal sealed class PrivacyHostSession : IDisposable
         }
 
         GdiProbe = CapturePathProbe.ValidateGdiScreenCopy(HostHwnd);
+        UpdateCaptureCompatibilityStatus();
         _log.Info($"Privacy GDI capture probe: verdict={GdiProbe.Verdict}, difference={GdiProbe.MeanRgbDifference:F1}, visibleVariance={GdiProbe.VisibleVariance:F1}, hiddenVariance={GdiProbe.HiddenVariance:F1}");
         return GdiProbe;
     }
@@ -186,6 +187,7 @@ internal sealed class PrivacyHostSession : IDisposable
             "privacy-capture-probe.exe", "RESULT DesktopDuplication=", HostHwnd);
         WindowsGraphicsCaptureProbe = await NativeCaptureProbeRunner.RunAsync(
             "privacy-wgc-capture-probe.exe", "RESULT WindowsGraphicsCapture=", HostHwnd);
+        UpdateCaptureCompatibilityStatus();
         _log.Info("Privacy Desktop Duplication probe: " + DesktopDuplicationProbe.Detail);
         _log.Info("Privacy Windows Graphics Capture probe: " + WindowsGraphicsCaptureProbe.Detail);
         return (DesktopDuplicationProbe, WindowsGraphicsCaptureProbe);
@@ -252,6 +254,14 @@ internal sealed class PrivacyHostSession : IDisposable
         CloseHost();
         _target = null;
         return false;
+    }
+
+    private void UpdateCaptureCompatibilityStatus()
+    {
+        Status = CapturePrivacyStatusPolicy.Build(
+            GdiProbe.Verdict,
+            DesktopDuplicationProbe.Verdict,
+            WindowsGraphicsCaptureProbe.Verdict);
     }
 
     private void HostClosed(object? sender, EventArgs e)

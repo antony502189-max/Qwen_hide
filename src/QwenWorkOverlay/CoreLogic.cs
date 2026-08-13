@@ -125,6 +125,24 @@ public static class CaptureProbePolicy
     }
 }
 
+public static class CapturePrivacyStatusPolicy
+{
+    public static string Build(
+        CaptureProbeVerdict gdi,
+        CaptureProbeVerdict desktopDuplication,
+        CaptureProbeVerdict windowsGraphicsCapture)
+    {
+        var exposed = new List<string>();
+        if (gdi == CaptureProbeVerdict.Exposed) exposed.Add("GDI");
+        if (desktopDuplication == CaptureProbeVerdict.Exposed) exposed.Add("Desktop Duplication");
+        if (windowsGraphicsCapture == CaptureProbeVerdict.Exposed) exposed.Add("Windows Graphics Capture");
+
+        return exposed.Count > 0
+            ? "ACTIVE — CAPTURE EXPOSED by " + string.Join(", ", exposed) + "; do not share Qwen"
+            : "ACTIVE — host WDA verified; capture results are pipeline-specific and do not certify conferencing apps";
+    }
+}
+
 public static class PrivacyMutationPolicy
 {
     public static bool CanMutateNativeWindow(bool nativeHwndExists, CapturePrivacyState privacyState) =>

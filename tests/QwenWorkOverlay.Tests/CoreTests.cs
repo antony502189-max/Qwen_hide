@@ -243,6 +243,17 @@ public class CoreTests
     }
 
     [Fact]
+    public void Capture_exposure_has_a_fail_closed_privacy_status()
+    {
+        var status = CapturePrivacyStatusPolicy.Build(
+            CaptureProbeVerdict.Exposed,
+            CaptureProbeVerdict.RedactedPlaceholder,
+            CaptureProbeVerdict.Inconclusive);
+        Assert.Contains("CAPTURE EXPOSED by GDI", status);
+        Assert.Contains("do not share Qwen", status);
+    }
+
+    [Fact]
     public void Virtual_mix_policy_rejects_physical_speakers_and_accepts_known_virtual_devices()
     {
         Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName("CABLE Input (VB-Audio Virtual Cable)"));
