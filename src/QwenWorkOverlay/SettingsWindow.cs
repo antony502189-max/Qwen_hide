@@ -17,9 +17,9 @@ public sealed class SettingsWindow : Window
 {
     public SettingsWindow(SettingsService service, AudioDeviceService devices)
     {
-        Title = "Qwen Desktop Controller Settings";
-        Width = 620;
-        Height = 690;
+        Title = "Настройки контроллера Qwen Desktop";
+        Width = 690;
+        Height = 740;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(17, 24, 39));
         Foreground = System.Windows.Media.Brushes.White;
@@ -30,35 +30,35 @@ public sealed class SettingsWindow : Window
         Content = scroll;
         var s = service.Current;
 
-        panel.Children.Add(Heading("Installed Qwen Desktop"));
+        panel.Children.Add(Heading("Установленный Qwen Desktop"));
         var qwenPath = new TextBox { Text = s.QwenExecutablePath ?? string.Empty, MinWidth = 420 };
         var pathRow = new DockPanel();
-        var browse = new Button { Content = "Browse…", Width = 88, Margin = new Thickness(8, 0, 0, 0) };
+        var browse = new Button { Content = "Обзор…", Width = 88, Margin = new Thickness(8, 0, 0, 0) };
         DockPanel.SetDock(browse, Dock.Right);
         browse.Click += (_, _) =>
         {
-            var dialog = new OpenFileDialog { Filter = "Qwen executable|Qwen.exe|Executable files|*.exe", CheckFileExists = true };
+            var dialog = new OpenFileDialog { Filter = "Qwen|Qwen.exe|Исполняемые файлы|*.exe", CheckFileExists = true };
             if (dialog.ShowDialog(this) == true) qwenPath.Text = dialog.FileName;
         };
         pathRow.Children.Add(browse);
         pathRow.Children.Add(qwenPath);
-        Add(panel, "Qwen.exe path (optional; auto-detected when possible)", pathRow);
+        Add(panel, "Путь к Qwen.exe (необязательно; по возможности определяется автоматически)", pathRow);
 
-        var autoLaunch = new CheckBox { Content = "Launch installed Qwen automatically when it is not running", IsChecked = s.AutoLaunchQwen, Margin = new Thickness(0, 6, 0, 0) };
-        var tray = new CheckBox { Content = "Start controller panel hidden in the system tray after Qwen is attached", IsChecked = s.StartControllerInTray, Margin = new Thickness(0, 4, 0, 0) };
+        var autoLaunch = new CheckBox { Content = "Автоматически запускать установленный Qwen, если он не запущен", IsChecked = s.AutoLaunchQwen, Margin = new Thickness(0, 6, 0, 0) };
+        var tray = new CheckBox { Content = "После подключения Qwen скрывать окно контроллера в системный трей", IsChecked = s.StartControllerInTray, Margin = new Thickness(0, 4, 0, 0) };
         panel.Children.Add(autoLaunch);
         panel.Children.Add(tray);
 
-        panel.Children.Add(Heading("Window controls"));
+        panel.Children.Add(Heading("Управление окном"));
         var opacity = new Slider { Minimum = .35, Maximum = 1, Value = s.Opacity, TickFrequency = .05, IsSnapToTickEnabled = true };
-        Add(panel, "Qwen opacity (35%–100%)", opacity);
-        var top = new CheckBox { Content = "Keep Qwen always on top", IsChecked = s.TopMost };
+        Add(panel, "Прозрачность Qwen (35%–100%)", opacity);
+        var top = new CheckBox { Content = "Держать Qwen поверх всех окон", IsChecked = s.TopMost };
         panel.Children.Add(top);
 
-        panel.Children.Add(Heading("Qwen-only audio mix"));
+        panel.Children.Add(Heading("Отдельный аудиомикс для Qwen"));
         panel.Children.Add(new TextBlock
         {
-            Text = "The controller captures the physical microphone and Windows playback in shared mode, mixes them, and can render the mix only to a recognized virtual cable. It never changes the Windows default microphone.",
+            Text = "Контроллер захватывает физический микрофон и звук Windows в совместном режиме, смешивает их и может отправлять микс только в распознанный виртуальный аудиокабель. Микрофон Windows по умолчанию контроллер не меняет.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(170, 180, 195)),
             Margin = new Thickness(0, 0, 0, 8)
@@ -67,39 +67,39 @@ public sealed class SettingsWindow : Window
         var mic = new ComboBox { ItemsSource = devices.Inputs(), DisplayMemberPath = "Name", SelectedValuePath = "Id", SelectedValue = s.MicrophoneDeviceId };
         var loopback = new ComboBox { ItemsSource = devices.Outputs(), DisplayMemberPath = "Name", SelectedValuePath = "Id", SelectedValue = s.LoopbackDeviceId };
         var virtualMix = new ComboBox { ItemsSource = devices.Outputs(), DisplayMemberPath = "Name", SelectedValuePath = "Id", SelectedValue = s.VirtualMixOutputDeviceId };
-        Add(panel, "Physical microphone", mic);
-        Add(panel, "Windows playback endpoint to hear the other participant", loopback);
-        Add(panel, "Virtual cable render endpoint used only for the Qwen mix", virtualMix);
+        Add(panel, "Физический микрофон", mic);
+        Add(panel, "Устройство воспроизведения Windows для захвата звука собеседника", loopback);
+        Add(panel, "Виртуальный аудиокабель для микса Qwen", virtualMix);
 
         var gains = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
         var mg = new TextBox { Text = s.MicGain.ToString("0.00", CultureInfo.InvariantCulture), Width = 72 };
         var sg = new TextBox { Text = s.SystemGain.ToString("0.00", CultureInfo.InvariantCulture), Width = 72 };
-        gains.Children.Add(new TextBlock { Text = "Mic gain", Width = 80, VerticalAlignment = VerticalAlignment.Center });
+        gains.Children.Add(new TextBlock { Text = "Микрофон", Width = 90, VerticalAlignment = VerticalAlignment.Center });
         gains.Children.Add(mg);
-        gains.Children.Add(new TextBlock { Text = "System gain", Width = 100, Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+        gains.Children.Add(new TextBlock { Text = "Системный звук", Width = 130, Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
         gains.Children.Add(sg);
         panel.Children.Add(gains);
 
-        var right = new CheckBox { Content = "Hold Right Ctrl to feed the configured mix to the virtual cable", IsChecked = s.RightCtrlAudioEnabled, Margin = new Thickness(0, 8, 0, 0) };
+        var right = new CheckBox { Content = "Удерживать Right Ctrl, чтобы подавать настроенный микс в виртуальный аудиокабель", IsChecked = s.RightCtrlAudioEnabled, Margin = new Thickness(0, 8, 0, 0) };
         panel.Children.Add(right);
 
-        var appAudioSettings = new Button { Content = "Open Windows per-app audio settings", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 10, 0, 0) };
+        var appAudioSettings = new Button { Content = "Открыть настройки звука Windows для приложений", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 10, 0, 0) };
         appAudioSettings.Click += (_, _) =>
         {
             try { Process.Start(new ProcessStartInfo("ms-settings:apps-volume") { UseShellExecute = true }); }
-            catch { MessageBox.Show(this, "Could not open Windows sound settings.", "Qwen Desktop Controller"); }
+            catch { MessageBox.Show(this, "Не удалось открыть настройки звука Windows.", "Контроллер Qwen Desktop"); }
         };
         panel.Children.Add(appAudioSettings);
 
         panel.Children.Add(new TextBlock
         {
-            Text = "If Qwen lets you choose an input device, select the capture side paired with the virtual cable. If it does not, Windows per-app input routing may be used manually where supported. Do not change the global default microphone just for this controller. Voice-button automation is best-effort and falls back to manual use if Qwen does not expose the button through Windows accessibility.",
+            Text = "Если Qwen позволяет выбрать устройство ввода, укажите микрофонную сторону, связанную с виртуальным аудиокабелем. Если выбора нет, при поддержке Windows можно вручную использовать маршрутизацию ввода для конкретного приложения. Не меняйте глобальный микрофон Windows только ради контроллера. Автоматизация голосовой кнопки работает по возможности; если Qwen не предоставляет кнопку через средства доступности Windows, используйте голосовой ввод вручную.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(170, 180, 195)),
             Margin = new Thickness(0, 8, 0, 0)
         });
 
-        var save = new Button { Content = "Save", Width = 90, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 20, 0, 0) };
+        var save = new Button { Content = "Сохранить", Width = 100, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 20, 0, 0) };
         save.Click += (_, _) =>
         {
             var requestedQwenPath = string.IsNullOrWhiteSpace(qwenPath.Text) ? null : qwenPath.Text.Trim().Trim('"');
@@ -109,8 +109,8 @@ public sealed class SettingsWindow : Window
                 if (!File.Exists(requestedQwenPath) || !Path.GetFileName(requestedQwenPath).Equals("Qwen.exe", StringComparison.OrdinalIgnoreCase))
                 {
                     MessageBox.Show(this,
-                        "The selected path must point to an existing Qwen.exe. Leave it blank to use automatic detection.",
-                        "Invalid Qwen path",
+                        "Выбранный путь должен указывать на существующий Qwen.exe. Оставьте поле пустым для автоматического поиска.",
+                        "Неверный путь к Qwen",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
                     return;
@@ -120,12 +120,11 @@ public sealed class SettingsWindow : Window
             var selectedLoopback = loopback.SelectedValue as string;
             var selectedVirtualMix = virtualMix.SelectedValue as string;
             if (!string.IsNullOrWhiteSpace(selectedVirtualMix) &&
-                !devices.ValidateVirtualMixOutput(selectedVirtualMix, selectedLoopback, out var virtualReason))
+                !devices.ValidateVirtualMixOutput(selectedVirtualMix, selectedLoopback, out _))
             {
                 MessageBox.Show(this,
-                    "The selected virtual mix destination was rejected for audio safety:\n\n" + virtualReason +
-                    "\n\nChoose a dedicated virtual cable render endpoint, not physical speakers/headphones or a Windows default output.",
-                    "Unsafe virtual audio destination",
+                    "Выбранное устройство для аудиомикса отклонено из соображений безопасности.\n\nВыберите отдельный виртуальный аудиокабель, а не физические динамики, наушники или устройство Windows по умолчанию.",
+                    "Небезопасное устройство аудиомикса",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
@@ -149,8 +148,8 @@ public sealed class SettingsWindow : Window
             if (!service.Save())
             {
                 MessageBox.Show(this,
-                    service.LastPersistenceError ?? "Settings could not be saved.",
-                    "Settings save failed",
+                    "Не удалось сохранить настройки контроллера.",
+                    "Ошибка сохранения настроек",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
                 return;
