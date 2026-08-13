@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Windows.Interop;
 
 namespace QwenWorkOverlay;
@@ -11,9 +12,11 @@ public sealed class GlobalHotkeys : IDisposable
     private readonly HwndSource _source;
     private readonly Action<int> _action;
     private readonly AppLogger _log;
+    private readonly Action? _emergencyAction;
     private readonly RightCtrlStateMachine _rightCtrl = new();
     private readonly List<HotkeyRegistration> _registrations = new();
     private bool _voiceToggleActive;
+    private long _lastHookDurationTicks;
 
     private const int WM_HOTKEY = 0x0312;
     private const int WM_KEYDOWN = 0x0100;
@@ -55,6 +58,7 @@ public sealed class GlobalHotkeys : IDisposable
     public event Action<bool>? VoiceToggleChanged;
     public IReadOnlyList<HotkeyRegistration> Registrations => _registrations;
     public bool HookReady => _hook != IntPtr.Zero;
+    public TimeSpan LastHookDuration => TimeSpan.FromSeconds(Volatile.Read(ref _lastHookDurationTicks) / (double)Stopwatch.Frequency);
     public bool AllRegistered => _registrations.All(x => x.Registered) && HookReady;
     public string FailureSummary
     {
@@ -66,10 +70,11 @@ public sealed class GlobalHotkeys : IDisposable
         }
     }
 
-    public GlobalHotkeys(Action<int> action, AppLogger log)
+    public GlobalHotkeys(Action<int> action, AppLogger log, Action? emergencyAction = null)
     {
         _action = action;
         _log = log;
+        _emergencyAction = emergencyAction;
         _source = new HwndSource(new HwndSourceParameters("QDC_Hotkeys")
         {
             Width = 0,
@@ -114,15 +119,23 @@ public sealed class GlobalHotkeys : IDisposable
         if (message == WM_HOTKEY)
         {
             var id = wParam.ToInt32();
-            if (id == VoiceToggleHotkeyId)
+            if (id == 11 && _emergencyAction is not null)
+            {
+                QueueWork(_emergencyAction);
+            }
+            else if (id == VoiceToggleHotkeyId)
             {
                 _voiceToggleActive = !_voiceToggleActive;
-                VoiceToggleChanged?.Invoke(_voiceToggleActive);
-                _log.Info("Ctrl+Shift+R Qwen voice toggle: " + (_voiceToggleActive ? "ON" : "OFF"));
+                var active = _voiceToggleActive;
+                QueueWork(() =>
+                {
+                    VoiceToggleChanged?.Invoke(active);
+                    _log.Info("Ctrl+Shift+R Qwen voice toggle: " + (active ? "ON" : "OFF"));
+                });
             }
             else
             {
-                _action(id);
+                QueueWork(() => _action(id));
             }
             handled = true;
         }
@@ -131,17 +144,24 @@ public sealed class GlobalHotkeys : IDisposable
 
     private IntPtr KeyboardHook(int code, IntPtr wParam, IntPtr lParam)
     {
+        var started = Stopwatch.GetTimestamp();
         if (code >= 0)
         {
             var vk = Marshal.ReadInt32(lParam);
             if (vk == VK_RCONTROL)
             {
-                if (wParam.ToInt32() == WM_KEYDOWN && _rightCtrl.OnDown()) RightCtrlChanged?.Invoke(true);
-                else if (wParam.ToInt32() == WM_KEYUP && _rightCtrl.OnUp()) RightCtrlChanged?.Invoke(false);
+                if (wParam.ToInt32() == WM_KEYDOWN && _rightCtrl.OnDown()) QueueWork(() => RightCtrlChanged?.Invoke(true));
+                else if (wParam.ToInt32() == WM_KEYUP && _rightCtrl.OnUp()) QueueWork(() => RightCtrlChanged?.Invoke(false));
             }
         }
+        Interlocked.Exchange(ref _lastHookDurationTicks, Stopwatch.GetTimestamp() - started);
         return CallNextHookEx(_hook, code, wParam, lParam);
     }
+
+    private static void QueueWork(Action action) => ThreadPool.UnsafeQueueUserWorkItem(_ =>
+    {
+        try { action(); } catch { }
+    }, null);
 
     public void Dispose()
     {

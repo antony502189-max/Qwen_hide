@@ -25,7 +25,9 @@ public sealed class QwenProcessLocator
     {
         var currentPid = Environment.ProcessId;
         var candidates = new List<QwenTarget>();
-        foreach (var process in Process.GetProcesses())
+        // Never inspect every process or every process MainModule. Qwen's executable name is
+        // known, so discovery starts from the small process-name set and validates its full path.
+        foreach (var process in Process.GetProcessesByName("Qwen"))
         {
             try
             {
@@ -164,8 +166,12 @@ public sealed class QwenProcessLocator
         !string.IsNullOrWhiteSpace(path) && File.Exists(path) &&
         Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsInstalledQwenExecutable(string? path) =>
-        IsExecutable(path) && string.Equals(Path.GetFileName(path), "Qwen.exe", StringComparison.OrdinalIgnoreCase);
+    private static bool IsInstalledQwenExecutable(string? path)
+    {
+        if (!IsExecutable(path) || !string.Equals(Path.GetFileName(path), "Qwen.exe", StringComparison.OrdinalIgnoreCase)) return false;
+        var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Qwen", "Qwen.exe");
+        return string.Equals(Path.GetFullPath(path!), Path.GetFullPath(installed), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static void AddCandidate(List<string> list, params string[] parts)
     {
@@ -226,7 +232,11 @@ public sealed class QwenWindowController : IDisposable
 
     public bool RecoverStaleState() => _recovery.TryRecoverStaleState();
 
-    public bool Attach(QwenTarget target, double opacity, bool topMost)
+    // Attachment is observational. It must not create a journal or send any style/position call.
+    // The compatibility overload intentionally ignores stored visual settings.
+    public bool Attach(QwenTarget target, double opacity, bool topMost) => Attach(target);
+
+    public bool Attach(QwenTarget target)
     {
         if (IsAttached && _target!.Hwnd == target.Hwnd) return true;
         Detach(restore: true);
@@ -251,24 +261,16 @@ public sealed class QwenWindowController : IDisposable
             return false;
         }
 
-        if (!_recovery.Save(target, _originalExStyle, _originalTopMost, _originalVisible,
-                _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey))
-        {
-            _log.Error("Verified recovery journal is unavailable; refusing to mutate the native Qwen window");
-            _target = null;
-            return false;
-        }
-
         _hidden = !_originalVisible;
-        if (!SetOpacity(opacity) || !SetTopMost(topMost))
-        {
-            _log.Error("Could not apply native Qwen window settings; restoring original state");
-            Detach(restore: true);
-            return false;
-        }
-
-        _log.Info("Attached to native Qwen desktop: " + target.Summary);
+        _log.Info("Observationally attached to native Qwen desktop: " + target.Summary);
         return true;
+    }
+
+    private bool BeginMutation()
+    {
+        if (_target is null) return false;
+        return _recovery.Save(_target, _originalExStyle, _originalTopMost, _originalVisible,
+            _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey);
     }
 
     public bool SetOpacity(double value)
@@ -280,6 +282,8 @@ public sealed class QwenWindowController : IDisposable
             return false;
         }
         value = Math.Clamp(value, .35, 1.0);
+        if (Math.Abs(value - _opacity) < .001) return true;
+        if (!BeginMutation()) return false;
         var previous = _opacity;
         _opacity = value;
         if (ApplyStyles()) return true;
@@ -296,6 +300,8 @@ public sealed class QwenWindowController : IDisposable
             _log.Error("Refusing click-through mutation while Qwen is hosted for capture privacy");
             return false;
         }
+        if (enabled == _clickThrough) return true;
+        if (!BeginMutation()) return false;
         var previous = _clickThrough;
         _clickThrough = enabled;
         if (ApplyStyles()) return true;
@@ -312,6 +318,8 @@ public sealed class QwenWindowController : IDisposable
             _log.Error("Refusing TopMost mutation while Qwen is hosted for capture privacy");
             return false;
         }
+        if (enabled == _topMost) return true;
+        if (!BeginMutation()) return false;
         var ok = Native.SetWindowPos(
             _target!.Hwnd,
             enabled ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
@@ -334,6 +342,7 @@ public sealed class QwenWindowController : IDisposable
             _log.Error("Refusing visibility mutation while Qwen is hosted for capture privacy");
             return false;
         }
+        if (!BeginMutation()) return false;
         var currentlyVisible = Native.IsWindowVisible(_target!.Hwnd);
         var ok = Native.ShowWindowAsync(_target.Hwnd, currentlyVisible ? Native.SW_HIDE : Native.SW_SHOW);
         if (!ok)
@@ -414,6 +423,7 @@ public sealed class QwenWindowController : IDisposable
     public bool EnablePrivacyHost()
     {
         if (!IsAttached || _target is null) return false;
+        if (!BeginMutation()) return false;
         if (_privacy.TryEnable(_target)) return true;
         // The privacy session has already restored its recovery snapshot. Detach this controller's
         // cached target so no subsequent mutation can operate on an unjournaled window.
@@ -455,23 +465,7 @@ public sealed class QwenWindowController : IDisposable
         _target = null;
         try
         {
-            if (target is not null && Native.IsWindow(target.Hwnd) && restore)
-            {
-                Native.SetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE, _originalExStyle);
-                var styleError = Marshal.GetLastWin32Error();
-                if (styleError != 0) _log.Error("Restoring original Qwen exstyle failed; win32=" + styleError);
-
-                if (_originalLayered && !Native.SetLayeredWindowAttributes(target.Hwnd, _originalColorKey, _originalAlpha, _originalLayerFlags))
-                    _log.Error("Restoring original Qwen layered attributes failed; win32=" + Marshal.GetLastWin32Error());
-
-                if (!Native.SetWindowPos(target.Hwnd,
-                    _originalTopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
-                    0, 0, 0, 0,
-                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED))
-                    _log.Error("Restoring original Qwen TopMost failed; win32=" + Marshal.GetLastWin32Error());
-
-                Native.ShowWindow(target.Hwnd, _originalVisible ? Native.SW_SHOW : Native.SW_HIDE);
-            }
+            if (target is not null && restore) _recovery.TryRecoverStaleState();
         }
         finally
         {
@@ -490,13 +484,17 @@ public sealed class QwenWindowController : IDisposable
 public sealed class ForegroundWindowTracker : IDisposable
 {
     private readonly Func<IntPtr?> _qwenHandle;
-    private readonly System.Threading.Timer _timer;
+    private readonly Native.WinEventDelegate _callback;
+    private readonly IntPtr _hook;
     private IntPtr _lastNonQwen;
 
     public ForegroundWindowTracker(Func<IntPtr?> qwenHandle)
     {
         _qwenHandle = qwenHandle;
-        _timer = new System.Threading.Timer(_ => Sample(), null, 0, 250);
+        _callback = OnForegroundChanged;
+        _hook = Native.SetWinEventHook(Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_FOREGROUND,
+            IntPtr.Zero, _callback, 0, 0, Native.WINEVENT_OUTOFCONTEXT | Native.WINEVENT_SKIPOWNPROCESS);
+        Sample();
     }
 
     public IntPtr LastNonQwenWindow => Native.IsWindow(_lastNonQwen) ? _lastNonQwen : IntPtr.Zero;
@@ -519,5 +517,11 @@ public sealed class ForegroundWindowTracker : IDisposable
         _lastNonQwen = root;
     }
 
-    public void Dispose() => _timer.Dispose();
+    // WinEvent callback performs only cheap HWND bookkeeping. It never enters WPF or logs.
+    private void OnForegroundChanged(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint eventThread, uint eventTime) => Sample();
+
+    public void Dispose()
+    {
+        if (_hook != IntPtr.Zero) Native.UnhookWinEvent(_hook);
+    }
 }

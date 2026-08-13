@@ -1,37 +1,70 @@
+using System.Collections.Concurrent;
+using System.Text;
+
 namespace QwenWorkOverlay;
 
-public sealed class AppLogger
+// Logging is deliberately lossy under load. A controller must never make Qwen or the shell wait
+// for a disk write just to record a diagnostic message.
+public sealed class AppLogger : IDisposable
 {
     private const long MaxLogBytes = 5 * 1024 * 1024;
+    private const int Capacity = 1024;
     private readonly string _path;
-    private readonly object _gate = new();
+    private readonly ConcurrentQueue<string> _queue = new();
+    private readonly SemaphoreSlim _signal = new(0);
+    private readonly CancellationTokenSource _stop = new();
+    private readonly Task _writer;
+    private int _queued;
+    private int _dropped;
+    private int _disposed;
 
     public AppLogger()
     {
         var directory = Path.Combine(SettingsService.Root, "logs");
         Directory.CreateDirectory(directory);
         _path = Path.Combine(directory, "app.log");
-        RotateIfNeeded();
+        _writer = Task.Run(WriteLoopAsync);
     }
 
     public string LogPath => _path;
-    public void Info(string text) => Write("INFO", text);
-    public void Error(string text) => Write("ERROR", text);
+    public int DroppedMessageCount => Volatile.Read(ref _dropped);
+    public void Info(string text) => Enqueue("INFO", text);
+    public void Error(string text) => Enqueue("ERROR", text);
 
-    private void Write(string level, string text)
+    private void Enqueue(string level, string text)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        if (Interlocked.Increment(ref _queued) > Capacity)
+        {
+            Interlocked.Decrement(ref _queued);
+            Interlocked.Increment(ref _dropped);
+            return;
+        }
+        _queue.Enqueue($"{DateTimeOffset.Now:O} [{level}] {text}");
+        _signal.Release();
+    }
+
+    private async Task WriteLoopAsync()
     {
         try
         {
-            lock (_gate)
+            while (true)
             {
+                await _signal.WaitAsync(_stop.Token).ConfigureAwait(false);
+                var batch = new StringBuilder();
+                while (_queue.TryDequeue(out var entry))
+                {
+                    Interlocked.Decrement(ref _queued);
+                    batch.AppendLine(entry);
+                    if (batch.Length >= 16 * 1024) break;
+                }
+                if (batch.Length == 0) continue;
                 RotateIfNeeded();
-                File.AppendAllText(_path, $"{DateTimeOffset.Now:O} [{level}] {text}{Environment.NewLine}");
+                await File.AppendAllTextAsync(_path, batch.ToString(), _stop.Token).ConfigureAwait(false);
             }
         }
-        catch
-        {
-            // Diagnostics must never crash or alter Qwen/Windows behavior.
-        }
+        catch (OperationCanceledException) { }
+        catch { /* logging is best effort */ }
     }
 
     private void RotateIfNeeded()
@@ -44,9 +77,15 @@ public sealed class AppLogger
             if (File.Exists(rotated)) File.Delete(rotated);
             File.Move(_path, rotated);
         }
-        catch
-        {
-            // Logging is best-effort only.
-        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _stop.Cancel();
+        try { _writer.Wait(TimeSpan.FromSeconds(1)); } catch { }
+        _signal.Dispose();
+        _stop.Dispose();
     }
 }

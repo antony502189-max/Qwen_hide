@@ -174,7 +174,10 @@ public sealed class WindowRecoveryService
             var currentStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
             var styleMatches = currentStyle == snapshot.OriginalExStyle;
             var parentMatches = snapshot.RecoverySchemaVersion < 2 || Native.GetParent(hwnd).ToInt64() == snapshot.OriginalParent;
-            var baseStyleMatches = snapshot.RecoverySchemaVersion < 2 || Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE).ToInt64() == snapshot.OriginalStyle;
+            // GWL_STYLE is only controller-mutated by the cross-process privacy host. Other
+            // native mutations intentionally leave it alone, and window managers may normalize
+            // unrelated style bits while applying an ex-style frame transition.
+            var baseStyleMatches = snapshot.RecoverySchemaVersion < 2 || !snapshot.PrivacyHostActive || Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE).ToInt64() == snapshot.OriginalStyle;
             var topMostMatches = ((currentStyle & Native.WS_EX_TOPMOST) != 0) == snapshot.OriginalTopMost;
             var visibleMatches = Native.IsWindowVisible(hwnd) == snapshot.OriginalVisible;
             var minimizedMatches = snapshot.RecoverySchemaVersion < 2 || Native.IsIconic(hwnd) == snapshot.OriginalMinimized;
@@ -264,12 +267,14 @@ public sealed class WindowRecoveryService
 
                 Marshal.SetLastPInvokeError(0);
                 Native.SetWindowLongPtr(hwnd, Native.GWL_STYLE, new IntPtr(snapshot.OriginalStyle));
-                baseStyleOk = Marshal.GetLastWin32Error() == 0;
+                // SetWindowLongPtr may legitimately return zero; the post-condition is the only
+                // useful success criterion and avoids retaining a recovery journal on stale last-error.
+                baseStyleOk = !snapshot.PrivacyHostActive || Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE).ToInt64() == snapshot.OriginalStyle;
             }
 
             Marshal.SetLastPInvokeError(0);
             Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(snapshot.OriginalExStyle));
-            var styleOk = Marshal.GetLastWin32Error() == 0;
+            var styleOk = true;
 
             var layeredOk = true;
             if (snapshot.OriginalLayered)
@@ -308,6 +313,11 @@ public sealed class WindowRecoveryService
                         ? Native.SW_SHOWMAXIMIZED
                         : Native.SW_SHOW;
             Native.ShowWindow(hwnd, showCommand);
+
+            // SetWindowPos topmost transitions can rewrite WS_EX_TOPMOST. Restore the exact
+            // recorded extended-style word after the Z-order/placement calls, then verify it.
+            Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(snapshot.OriginalExStyle));
+            styleOk = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64() == snapshot.OriginalExStyle;
 
             // GetParent's interpretation depends on WS_CHILD. Check only after both style words have
             // been restored; checking immediately after SetParent(..., NULL) falsely reports desktop

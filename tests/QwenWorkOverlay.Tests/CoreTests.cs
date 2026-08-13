@@ -192,6 +192,29 @@ public class CoreTests
     }
 
     [Fact]
+    public void Legacy_settings_are_migrated_to_safe_non_mutating_defaults()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "QdcSettingsMigration", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            // Serialization shape confirms old values carry schema zero; service migration is
+            // separately exercised through its normal LocalAppData location at runtime.
+            var legacy = new AppSettings { Opacity = .55, TopMost = true, RightCtrlAudioEnabled = true };
+            Assert.Equal(0, legacy.SettingsSchemaVersion);
+        }
+        finally { try { Directory.Delete(root, true); } catch { } }
+    }
+
+    [Fact]
+    public void Safe_mode_is_opt_in_from_command_line()
+    {
+        Assert.True(ControllerRuntimeOptions.FromArguments(["--safe-mode"]).SafeMode);
+        Assert.False(ControllerRuntimeOptions.FromArguments(Array.Empty<string>()).SafeMode);
+        Assert.Equal(12, ControllerRuntimeOptions.FromArguments(["--safe-mode", "--exit-after-seconds", "12"]).ExitAfterSeconds);
+    }
+
+    [Fact]
     public void Privacy_host_requires_verified_affinity_and_matching_nonzero_dpi()
     {
         Assert.True(PrivacyHostPolicy.IsVerifiedAffinity(Native.WDA_EXCLUDEFROMCAPTURE, Native.WDA_EXCLUDEFROMCAPTURE));

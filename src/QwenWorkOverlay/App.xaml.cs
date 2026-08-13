@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        var options = ControllerRuntimeOptions.FromArguments(e.Args);
         var settings = new SettingsService();
         settings.Load();
         _logger = new AppLogger();
@@ -46,8 +47,12 @@ public partial class App : System.Windows.Application
             try { (MainWindow as QwenWorkOverlay.MainWindow)?.EmergencyRestoreForCrash(); } catch { }
         };
 
-        MainWindow = new MainWindow(settings, _logger);
+        MainWindow = new MainWindow(settings, _logger, options);
         MainWindow.Show();
+        // Test harness only: bounded lifetime is accepted exclusively with safe mode, which has
+        // no Qwen mutation or lazily-created audio resources to recover.
+        if (options.SafeMode && options.ExitAfterSeconds is > 0)
+            _ = Task.Delay(TimeSpan.FromSeconds(options.ExitAfterSeconds.Value)).ContinueWith(_ => Environment.Exit(0));
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -55,6 +60,7 @@ public partial class App : System.Windows.Application
         try { _singleInstance?.ReleaseMutex(); } catch { }
         _singleInstance?.Dispose();
         _logger?.Info("Application exit");
+        _logger?.Dispose();
         base.OnExit(e);
     }
 }

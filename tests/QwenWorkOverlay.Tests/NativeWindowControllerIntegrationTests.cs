@@ -76,6 +76,12 @@ public sealed class NativeWindowControllerIntegrationTests
         {
             Assert.True(controller.Attach(target, .70, true));
             Assert.True(controller.IsAttached);
+            // Attach is observational: no journal or external window state is created until a
+            // user explicitly requests a mutation.
+            Assert.False(File.Exists(journal));
+            Assert.Equal(originalStyle, NativeTest.GetWindowLongPtr(hwnd, NativeTest.GWL_EXSTYLE).ToInt64());
+            Assert.True(controller.SetOpacity(.70));
+            Assert.True(controller.SetTopMost(true));
             Assert.True(File.Exists(journal));
 
             var styled = NativeTest.GetWindowLongPtr(hwnd, NativeTest.GWL_EXSTYLE).ToInt64();

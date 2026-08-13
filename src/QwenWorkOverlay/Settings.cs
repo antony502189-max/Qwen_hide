@@ -4,8 +4,11 @@ namespace QwenWorkOverlay;
 
 public sealed class AppSettings
 {
-    public double Opacity { get; set; } = .85;
-    public bool TopMost { get; set; } = true;
+    public int SettingsSchemaVersion { get; set; }
+    public double Opacity { get; set; } = 1;
+    public bool TopMost { get; set; }
+    public bool ClickThrough { get; set; }
+    public bool Privacy { get; set; }
     public bool AutoLaunchQwen { get; set; } = true;
     public bool StartControllerInTray { get; set; } = true;
     public string? QwenExecutablePath { get; set; }
@@ -15,7 +18,7 @@ public sealed class AppSettings
     public string? VirtualMixOutputDeviceId { get; set; }
     public float MicGain { get; set; } = 1f;
     public float SystemGain { get; set; } = 1f;
-    public bool RightCtrlAudioEnabled { get; set; } = true;
+    public bool RightCtrlAudioEnabled { get; set; }
 
     public double ControllerX { get; set; } = 120;
     public double ControllerY { get; set; } = 120;
@@ -43,7 +46,7 @@ public sealed class SettingsService
             LastPersistenceError = "Settings load failed: " + ex.GetType().Name;
         }
 
-        Normalize();
+        MigrateAndNormalize();
     }
 
     public bool Save()
@@ -51,7 +54,7 @@ public sealed class SettingsService
         LastPersistenceError = null;
         try
         {
-            Normalize();
+            MigrateAndNormalize();
             Directory.CreateDirectory(Root);
             var temp = SettingsPath + ".tmp";
             var json = JsonSerializer.Serialize(Current, new JsonSerializerOptions { WriteIndented = true });
@@ -66,8 +69,19 @@ public sealed class SettingsService
         }
     }
 
-    private void Normalize()
+    private void MigrateAndNormalize()
     {
+        // Versions before v2 started with transparency, TopMost and audio enabled. Never replay
+        // those historical mutations after upgrading: explicit user action is now required.
+        if (Current.SettingsSchemaVersion < 2)
+        {
+            Current.SettingsSchemaVersion = 2;
+            Current.Opacity = 1;
+            Current.TopMost = false;
+            Current.ClickThrough = false;
+            Current.Privacy = false;
+            Current.RightCtrlAudioEnabled = false;
+        }
         Current.Opacity = Math.Clamp(Current.Opacity, .35, 1.0);
         Current.MicGain = Math.Clamp(Current.MicGain, 0f, 4f);
         Current.SystemGain = Math.Clamp(Current.SystemGain, 0f, 4f);
