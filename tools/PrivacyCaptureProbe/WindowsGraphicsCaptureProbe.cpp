@@ -218,7 +218,7 @@ int wmain(int argc, wchar_t** argv)
         }
         difference /= visible.pixels.size();
         const wchar_t* verdict = (visible.variance < 6 && hidden.variance < 6) ? L"INCONCLUSIVE"
-            : difference <= 4 ? L"LIKELY_EXCLUDED"
+            : difference <= 4 ? L"INCONCLUSIVE"
             : visible.variance < 6 && hidden.variance >= 6 && difference >= 18 ? L"REDACTED_PLACEHOLDER"
             : difference >= 18 ? L"EXPOSED" : L"INCONCLUSIVE";
         std::wprintf(L"RESULT WindowsGraphicsCapture=%s Difference=%.1f VisibleVariance=%.1f HiddenVariance=%.1f\n",

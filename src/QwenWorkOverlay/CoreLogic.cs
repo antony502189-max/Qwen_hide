@@ -101,7 +101,6 @@ public static class PrivacyHostPolicy
 public enum CaptureProbeVerdict
 {
     NotRun,
-    LikelyExcluded,
     RedactedPlaceholder,
     Exposed,
     Inconclusive,
@@ -117,7 +116,9 @@ public static class CaptureProbePolicy
         if (!double.IsFinite(meanRgbDifference) || !double.IsFinite(visibleVariance) || !double.IsFinite(hiddenVariance))
             return CaptureProbeVerdict.Failed;
         if (visibleVariance < 6 && hiddenVariance < 6) return CaptureProbeVerdict.Inconclusive;
-        if (meanRgbDifference <= 4) return CaptureProbeVerdict.LikelyExcluded;
+        // A matching visible/hidden sample can be a coincidentally uniform Qwen view or desktop;
+        // it never proves that a capture pipeline excluded the host.
+        if (meanRgbDifference <= 4) return CaptureProbeVerdict.Inconclusive;
         if (visibleVariance < 6 && hiddenVariance >= 6 && meanRgbDifference >= 18) return CaptureProbeVerdict.RedactedPlaceholder;
         if (meanRgbDifference >= 18) return CaptureProbeVerdict.Exposed;
         return CaptureProbeVerdict.Inconclusive;

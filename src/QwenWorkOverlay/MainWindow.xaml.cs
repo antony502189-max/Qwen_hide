@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private bool _launchAttempted;
     private bool _voiceStartedByHotkey;
     private bool _voiceToggleStartedByHotkey;
+    private bool _privacyProbeRunning;
     private bool _resourcesDisposed;
 
     public MainWindow(SettingsService settings, AppLogger log)
@@ -439,6 +440,10 @@ public partial class MainWindow : Window
             $"GDI screen-copy probe: {_qwen.GdiCaptureProbe.Verdict}\n" +
             $"GDI probe detail: {_qwen.GdiCaptureProbe.Detail}\n" +
             $"GDI mean RGB difference: {_qwen.GdiCaptureProbe.MeanRgbDifference:F1}\n" +
+            $"Desktop Duplication probe: {_qwen.DesktopDuplicationCaptureProbe.Verdict}\n" +
+            $"Desktop Duplication detail: {_qwen.DesktopDuplicationCaptureProbe.Detail}\n" +
+            $"Windows Graphics Capture probe: {_qwen.WindowsGraphicsCaptureProbe.Verdict}\n" +
+            $"Windows Graphics Capture detail: {_qwen.WindowsGraphicsCaptureProbe.Detail}\n" +
             $"Recovery state: {(_qwen.PrivacyState == CapturePrivacyState.Enabled ? "privacy-host active" : "native window journal / normal")}\n" +
             $"Windows audio defaults unchanged: {defaultsSafe}\n" +
             $"Default input before: {_deviceGuard.InputBefore}\n" +
@@ -476,6 +481,26 @@ public partial class MainWindow : Window
         var result = _qwen.ValidatePrivacyGdiCapture();
         Toast("GDI capture probe: " + result.Verdict);
         UpdateStatus();
+    }
+    private async void PrivacyNativeProbe_Click(object sender, RoutedEventArgs e)
+    {
+        if (_privacyProbeRunning)
+        {
+            Toast("Native capture validation is already running");
+            return;
+        }
+
+        _privacyProbeRunning = true;
+        try
+        {
+            var results = await _qwen.ValidatePrivacyNativeCapturePathsAsync();
+            Toast($"Native capture APIs: Desktop Duplication {results.DesktopDuplication.Verdict}; WGC {results.WindowsGraphicsCapture.Verdict}");
+        }
+        finally
+        {
+            _privacyProbeRunning = false;
+            UpdateStatus();
+        }
     }
     private void Diagnostics_Click(object sender, RoutedEventArgs e) => ShowDiagnostics();
 

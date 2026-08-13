@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Diagnostics;
 using System.Windows.Threading;
 using Xunit;
 
@@ -75,10 +74,7 @@ public sealed class RealQwenPrivacyIntegrationTests
             Assert.NotEqual(CaptureProbeVerdict.NotRun, gdiProbe.Verdict);
             Assert.NotEqual(CaptureProbeVerdict.Failed, gdiProbe.Verdict);
 
-            RunOptionalCaptureProbe(logger, controller.PrivacyHostHwnd,
-                "QDC_DESKTOP_DUPLICATION_PROBE", "Desktop Duplication", "RESULT DesktopDuplication=");
-            RunOptionalCaptureProbe(logger, controller.PrivacyHostHwnd,
-                "QDC_WINDOWS_GRAPHICS_CAPTURE_PROBE", "Windows Graphics Capture", "RESULT WindowsGraphicsCapture=");
+            StageAndRunOptionalNativeCaptureProbes(controller);
 
             // Exercise the same restoration path used if the controller-owned host disappears.
             // This validates that Qwen cannot remain parented to a dead host and that the controller
@@ -134,26 +130,24 @@ public sealed class RealQwenPrivacyIntegrationTests
         Dispatcher.PushFrame(frame);
     }
 
-    private static void RunOptionalCaptureProbe(AppLogger logger, IntPtr hostHwnd,
-        string environmentVariable, string capturePath, string expectedPrefix)
+    private static void StageAndRunOptionalNativeCaptureProbes(QwenWindowController controller)
     {
-        var probe = Environment.GetEnvironmentVariable(environmentVariable);
-        if (string.IsNullOrWhiteSpace(probe)) return;
-        Assert.True(File.Exists(probe), "Configured " + capturePath + " probe does not exist: " + probe);
-        using var process = Process.Start(new ProcessStartInfo(probe, "0x" + hostHwnd.ToInt64().ToString("X"))
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        });
-        Assert.NotNull(process);
-        Assert.True(process!.WaitForExit(10000), capturePath + " probe timed out.");
-        var output = process.StandardOutput.ReadToEnd().Trim();
-        var error = process.StandardError.ReadToEnd().Trim();
-        logger.Info("Privacy " + capturePath + " probe: " + output);
-        Assert.Equal(0, process.ExitCode);
-        Assert.StartsWith(expectedPrefix, output);
-        Assert.True(string.IsNullOrWhiteSpace(error), capturePath + " probe stderr: " + error);
+        var desktopDuplication = Environment.GetEnvironmentVariable("QDC_DESKTOP_DUPLICATION_PROBE");
+        var windowsGraphicsCapture = Environment.GetEnvironmentVariable("QDC_WINDOWS_GRAPHICS_CAPTURE_PROBE");
+        if (string.IsNullOrWhiteSpace(desktopDuplication) && string.IsNullOrWhiteSpace(windowsGraphicsCapture)) return;
+        Assert.False(string.IsNullOrWhiteSpace(desktopDuplication), "Both native capture probes must be supplied together.");
+        Assert.False(string.IsNullOrWhiteSpace(windowsGraphicsCapture), "Both native capture probes must be supplied together.");
+        StageHelper(desktopDuplication!, "privacy-capture-probe.exe");
+        StageHelper(windowsGraphicsCapture!, "privacy-wgc-capture-probe.exe");
+
+        var results = controller.ValidatePrivacyNativeCapturePathsAsync().GetAwaiter().GetResult();
+        Assert.NotEqual(CaptureProbeVerdict.Failed, results.DesktopDuplication.Verdict);
+        Assert.NotEqual(CaptureProbeVerdict.Failed, results.WindowsGraphicsCapture.Verdict);
+    }
+
+    private static void StageHelper(string source, string fileName)
+    {
+        Assert.True(File.Exists(source), "Configured native capture probe does not exist: " + source);
+        File.Copy(source, Path.Combine(AppContext.BaseDirectory, fileName), overwrite: true);
     }
 }

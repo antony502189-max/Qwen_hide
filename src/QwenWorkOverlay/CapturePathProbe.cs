@@ -42,7 +42,6 @@ internal static class CapturePathProbe
             var verdict = CaptureProbePolicy.ClassifyGdi(difference, visibleVariance, hiddenVariance);
             var detail = verdict switch
             {
-                CaptureProbeVerdict.LikelyExcluded => "GDI screen copy likely saw the background rather than the privacy host",
                 CaptureProbeVerdict.RedactedPlaceholder => "GDI screen copy saw a uniform redacted surface, not strict host absence",
                 CaptureProbeVerdict.Exposed => "GDI screen copy changed when the privacy host was hidden (host content was captured)",
                 _ => "GDI screen copy result is inconclusive; no capture-privacy claim"

@@ -54,6 +54,7 @@ internal sealed class PrivacyHostSession : IDisposable
     private readonly AppLogger _log;
     private readonly WindowRecoveryService _recovery;
     private PrivacyHostWindow? _host;
+    private IntPtr _hostHwnd;
     private QwenTarget? _target;
 
     public PrivacyHostSession(AppLogger log, WindowRecoveryService recovery)
@@ -64,7 +65,9 @@ internal sealed class PrivacyHostSession : IDisposable
 
     public CapturePrivacyState State { get; private set; } = CapturePrivacyState.Off;
     public string Status { get; private set; } = "OFF (privacy host not enabled)";
-    public IntPtr HostHwnd => _host?.Hwnd ?? IntPtr.Zero;
+    // Reading WindowInteropHelper.Handle requires the WPF owner thread. Cache the verified HWND
+    // while constructing the host so diagnostics and asynchronous capture probes never cross it.
+    public IntPtr HostHwnd => _hostHwnd;
     public IntPtr QwenChildHwnd => _target?.Hwnd ?? IntPtr.Zero;
     public IntPtr OriginalParent { get; private set; }
     public IntPtr CurrentParent => _target is not null && Native.IsWindow(_target.Hwnd) ? Native.GetParent(_target.Hwnd) : IntPtr.Zero;
@@ -76,6 +79,8 @@ internal sealed class PrivacyHostSession : IDisposable
     public IntPtr HostDpiAwarenessContext { get; private set; }
     public IntPtr QwenDpiAwarenessContext { get; private set; }
     public CapturePathProbeResult GdiProbe { get; private set; } = CapturePathProbeResult.NotRun;
+    public NativeCaptureProbeResult DesktopDuplicationProbe { get; private set; } = NativeCaptureProbeResult.NotRun;
+    public NativeCaptureProbeResult WindowsGraphicsCaptureProbe { get; private set; } = NativeCaptureProbeResult.NotRun;
 
     public bool TryEnable(QwenTarget target)
     {
@@ -105,6 +110,7 @@ internal sealed class PrivacyHostSession : IDisposable
             _host.Show();
             var hostHwnd = _host.Hwnd;
             if (hostHwnd == IntPtr.Zero || !Native.IsWindow(hostHwnd)) return Fail("Privacy host HWND was not created");
+            _hostHwnd = hostHwnd;
 
             DwmCompositionEnabled = Native.IsDesktopCompositionEnabled();
             if (!DwmCompositionEnabled) return Fail("Desktop Window Manager composition is unavailable; capture affinity cannot be trusted");
@@ -139,6 +145,8 @@ internal sealed class PrivacyHostSession : IDisposable
             _host.AttachChild(target.Hwnd);
             State = CapturePrivacyState.Enabled;
             GdiProbe = CapturePathProbeResult.NotRun;
+            DesktopDuplicationProbe = NativeCaptureProbeResult.NotRun;
+            WindowsGraphicsCaptureProbe = NativeCaptureProbeResult.NotRun;
             Status = "ON (host affinity verified; capture compatibility still requires per-pipeline validation)";
             _log.Info($"Privacy host enabled: host=0x{hostHwnd.ToInt64():X}, qwen=0x{target.Hwnd.ToInt64():X}, dpi={HostDpi}, dpiAwareness={Native.DescribeDpiAwarenessContext(HostDpiAwarenessContext)}, affinity=0x{affinity:X}");
             return true;
@@ -163,6 +171,26 @@ internal sealed class PrivacyHostSession : IDisposable
         return GdiProbe;
     }
 
+    public async Task<(NativeCaptureProbeResult DesktopDuplication, NativeCaptureProbeResult WindowsGraphicsCapture)> ValidateNativeCapturePathsAsync()
+    {
+        if (State != CapturePrivacyState.Enabled || HostHwnd == IntPtr.Zero)
+        {
+            var failure = new NativeCaptureProbeResult(CaptureProbeVerdict.Failed,
+                "Native capture probes require an active verified privacy host");
+            DesktopDuplicationProbe = failure;
+            WindowsGraphicsCaptureProbe = failure;
+            return (failure, failure);
+        }
+
+        DesktopDuplicationProbe = await NativeCaptureProbeRunner.RunAsync(
+            "privacy-capture-probe.exe", "RESULT DesktopDuplication=", HostHwnd);
+        WindowsGraphicsCaptureProbe = await NativeCaptureProbeRunner.RunAsync(
+            "privacy-wgc-capture-probe.exe", "RESULT WindowsGraphicsCapture=", HostHwnd);
+        _log.Info("Privacy Desktop Duplication probe: " + DesktopDuplicationProbe.Detail);
+        _log.Info("Privacy Windows Graphics Capture probe: " + WindowsGraphicsCaptureProbe.Detail);
+        return (DesktopDuplicationProbe, WindowsGraphicsCaptureProbe);
+    }
+
     // Once recovery has completed, the controller must obtain a new journal before it mutates Qwen
     // again. This clears only the failed session bookkeeping; it never restores or changes Qwen.
     public void ResetAfterVerifiedRecovery()
@@ -179,6 +207,8 @@ internal sealed class PrivacyHostSession : IDisposable
         HostDpiAwarenessContext = IntPtr.Zero;
         QwenDpiAwarenessContext = IntPtr.Zero;
         GdiProbe = CapturePathProbeResult.NotRun;
+        DesktopDuplicationProbe = NativeCaptureProbeResult.NotRun;
+        WindowsGraphicsCaptureProbe = NativeCaptureProbeResult.NotRun;
         State = CapturePrivacyState.Off;
         Status = "OFF (Qwen must be reacquired after privacy recovery)";
     }
@@ -228,6 +258,7 @@ internal sealed class PrivacyHostSession : IDisposable
     {
         if (State != CapturePrivacyState.Enabled) return;
         _log.Error("Privacy host closed unexpectedly; attempting Qwen restore");
+        _hostHwnd = IntPtr.Zero;
         State = CapturePrivacyState.Failed;
         Status = "FAILED: privacy host closed unexpectedly";
         _recovery.TryRecoverStaleState();
@@ -238,6 +269,7 @@ internal sealed class PrivacyHostSession : IDisposable
     {
         var host = _host;
         _host = null;
+        _hostHwnd = IntPtr.Zero;
         if (host is null) return;
         host.Closed -= HostClosed;
         try { host.Close(); } catch { }

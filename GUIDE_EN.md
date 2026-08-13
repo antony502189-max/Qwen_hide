@@ -36,9 +36,9 @@ Before Qwen changes parent, the recovery journal durably records and verifies it
 
 `Privacy host ON` means the host affinity was genuinely set and read back. It does **not** mean every capture product honors it. The controller cannot certify full-monitor sharing in Teams, Zoom, Google Meet, or Yandex Telemost without observing each product's shared output. Treat an application as unsupported until it passes the manual matrix in `MANUAL_TEST_CHECKLIST_EN.md`.
 
-The optional **Validate GDI Capture** action samples four bounded patches while the active host is visible and briefly hidden. It stores only aggregate pixel statistics, not images. Its result is explicitly limited to legacy GDI screen copying. `LikelyExcluded` means the sampled surface matched its background; `RedactedPlaceholder` means content was redacted but the host was not proven absent; `Exposed` means host content was captured. None establishes behavior for Desktop Duplication, Windows Graphics Capture, or conferencing software.
+The optional **Validate GDI Capture** action samples four bounded patches while the active host is visible and briefly hidden. It stores only aggregate pixel statistics, not images. Its result is explicitly limited to legacy GDI screen copying. A matching visible/hidden sample is always `Inconclusive`, because it cannot prove host absence; `RedactedPlaceholder` means content was redacted but the host was not proven absent; `Exposed` means host content was captured. None establishes behavior for Desktop Duplication, Windows Graphics Capture, or conferencing software.
 
-The packaged `privacy-capture-probe.exe` and `privacy-wgc-capture-probe.exe` exercise **Desktop Duplication** and full-monitor **Windows Graphics Capture** with the same bounded aggregate-pixel method. Enable Privacy Host, copy its host HWND from Diagnostics, then run either helper with `0xHOSTHWND` from the release folder. Each prints one result line and briefly hides/restores the host; neither creates screenshots or files. `RedactedPlaceholder` protects Qwen content but is still not proof that the host is absent from a full-monitor share; `LikelyExcluded` remains limited to the tested API.
+The controller's **Validate Native Capture APIs** action invokes the packaged `privacy-capture-probe.exe` and `privacy-wgc-capture-probe.exe` for **Desktop Duplication** and full-monitor **Windows Graphics Capture**. It records only their bounded aggregate-pixel result lines in Diagnostics and briefly hides/restores the host; no screenshots or files are created. The helpers may also be run manually with `0xHOSTHWND` from Diagnostics. `RedactedPlaceholder` protects Qwen content but is still not proof that the host is absent from a full-monitor share; a matching sample is reported as `Inconclusive`.
 
 ## 4. Requirements
 
@@ -312,7 +312,7 @@ Open Diagnostics. If Qwen does not expose an accessible microphone/voice button,
 
 ### Capture privacy is not a full-share pass
 
-The controller never fakes affinity on Qwen's foreign HWND: privacy mode applies and verifies it only on the controller-owned host. A verified host is still not proof that a particular capture API or conferencing product excludes it. On the target machine GDI is **Exposed**, Desktop Duplication is **RedactedPlaceholder**, and full-monitor Windows Graphics Capture is **LikelyExcluded**; validate each full-monitor share application separately.
+The controller never fakes affinity on Qwen's foreign HWND: privacy mode applies and verifies it only on the controller-owned host. A verified host is still not proof that a particular capture API or conferencing product excludes it. On the target machine GDI has shown **Exposed** and inconclusive samples, while Desktop Duplication and Windows Graphics Capture have shown **RedactedPlaceholder** samples; validate each full-monitor share application separately.
 
 ## 20. Building from source
 

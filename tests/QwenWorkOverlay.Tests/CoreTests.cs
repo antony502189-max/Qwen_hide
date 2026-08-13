@@ -212,7 +212,7 @@ public class CoreTests
     }
 
     [Theory]
-    [InlineData(2, 30, 30, CaptureProbeVerdict.LikelyExcluded)]
+    [InlineData(2, 30, 30, CaptureProbeVerdict.Inconclusive)]
     [InlineData(35, 30, 30, CaptureProbeVerdict.Exposed)]
     [InlineData(8, 30, 30, CaptureProbeVerdict.Inconclusive)]
     [InlineData(2, 1, 1, CaptureProbeVerdict.Inconclusive)]
@@ -221,6 +221,17 @@ public class CoreTests
         double difference, double visibleVariance, double hiddenVariance, CaptureProbeVerdict expected)
     {
         Assert.Equal(expected, CaptureProbePolicy.ClassifyGdi(difference, visibleVariance, hiddenVariance));
+    }
+
+    [Theory]
+    [InlineData("RESULT DesktopDuplication=REDACTED_PLACEHOLDER Difference=33.7", "RESULT DesktopDuplication=", CaptureProbeVerdict.RedactedPlaceholder)]
+    [InlineData("RESULT WindowsGraphicsCapture=LIKELY_EXCLUDED Difference=0.0", "RESULT WindowsGraphicsCapture=", CaptureProbeVerdict.Inconclusive)]
+    [InlineData("RESULT WindowsGraphicsCapture=EXPOSED Difference=48.0", "RESULT WindowsGraphicsCapture=", CaptureProbeVerdict.Exposed)]
+    [InlineData("unexpected content", "RESULT DesktopDuplication=", CaptureProbeVerdict.Failed)]
+    public void Native_capture_probe_output_is_strictly_parsed_without_claiming_a_broad_privacy_pass(
+        string output, string prefix, CaptureProbeVerdict expected)
+    {
+        Assert.Equal(expected, NativeCaptureProbeOutputParser.Parse(output, prefix).Verdict);
     }
 
     [Fact]
