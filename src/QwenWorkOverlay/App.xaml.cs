@@ -26,8 +26,19 @@ public partial class App : System.Windows.Application
 
         var settings = new SettingsService();
         settings.Load();
+
+        var safeMode = e.Args.Any(x => string.Equals(x, "--safe-mode", StringComparison.OrdinalIgnoreCase));
+        if (safeMode)
+        {
+            settings.Current.Opacity = 1.0;
+            settings.Current.TopMost = false;
+            settings.Current.StartControllerInTray = false;
+            settings.Current.RightCtrlAudioEnabled = false;
+            settings.Current.AutoLaunchQwen = false;
+        }
+
         _logger = new AppLogger();
-        _logger.Info("Startup");
+        _logger.Info(safeMode ? "Startup (SAFE MODE)" : "Startup");
 
         // If a previous controller process was killed while Qwen remained alive, restore the exact
         // native window styles before attaching again. This prevents persistent click-through/alpha state.
