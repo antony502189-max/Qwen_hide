@@ -79,6 +79,15 @@ public static class NativeCapturePrivacyPolicy
     public static bool CanApplyDirectly(int controllerProcessId, int targetProcessId) => controllerProcessId == targetProcessId;
 }
 
+public static class TrayStartupPolicy
+{
+    // Keep the setup window available until a verified native Qwen attachment exists. Once the
+    // user has opted into tray startup, hide exactly once; repeated discovery callbacks must not
+    // steal focus or keep changing window visibility.
+    public static bool ShouldHideAfterAttach(bool startInTray, bool hasAttached, bool alreadyHandled) =>
+        startInTray && hasAttached && !alreadyHandled;
+}
+
 public enum PrivacyHostTransition
 {
     Off,

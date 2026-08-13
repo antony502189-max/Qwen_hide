@@ -241,14 +241,23 @@ public class CoreTests
         finally { try { Directory.Delete(root, true); } catch { } }
     }
 
+    [Theory]
+    [InlineData(true, true, false, true)]
+    [InlineData(true, false, false, false)]
+    [InlineData(false, true, false, false)]
+    [InlineData(true, true, true, false)]
+    public void Tray_startup_hides_only_once_after_native_attachment(bool startInTray, bool attached, bool alreadyHandled, bool expected)
+    {
+        Assert.Equal(expected, TrayStartupPolicy.ShouldHideAfterAttach(startInTray, attached, alreadyHandled));
+    }
+
     [Fact]
     public void Safe_mode_is_opt_in_from_command_line()
     {
         Assert.True(ControllerRuntimeOptions.FromArguments(["--safe-mode"]).SafeMode);
         Assert.False(ControllerRuntimeOptions.FromArguments(Array.Empty<string>()).SafeMode);
         Assert.Equal(12, ControllerRuntimeOptions.FromArguments(["--safe-mode", "--exit-after-seconds", "12"]).ExitAfterSeconds);
-        Assert.True(ControllerRuntimeOptions.FromArguments(["--enable-opacity", "--enable-experimental-privacy-host"]).OpacityEnabled);
-        Assert.True(ControllerRuntimeOptions.FromArguments(["--enable-opacity", "--enable-experimental-privacy-host"]).ExperimentalPrivacyHostEnabled);
+        Assert.True(ControllerRuntimeOptions.FromArguments(["--enable-opacity"]).OpacityEnabled);
     }
 
     [Fact]

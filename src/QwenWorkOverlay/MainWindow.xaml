@@ -36,10 +36,6 @@
             <Button Content="Attach / Open Qwen" Click="Attach_Click"/>
             <Button Content="Show Qwen" Click="ShowQwen_Click"/>
             <Button Content="Toggle Click-through" Click="Click_Click"/>
-            <Button Content="Toggle Privacy Host" Click="Privacy_Click"/>
-            <Button Content="Validate GDI Capture" Click="PrivacyGdiProbe_Click"/>
-            <Button Content="Validate PrintWindow" Click="PrivacyPrintWindowProbe_Click"/>
-            <Button Content="Validate Native Capture APIs" Click="PrivacyNativeProbe_Click"/>
             <Button Content="Settings" Click="Settings_Click"/>
             <Button Content="Diagnostics" Click="Diagnostics_Click"/>
         </WrapPanel>

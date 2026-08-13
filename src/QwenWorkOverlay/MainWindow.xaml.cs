@@ -27,8 +27,8 @@ public partial class MainWindow : Window
     private GlobalHotkeys? _hotkeys;
     private Forms.NotifyIcon? _tray;
     private bool _resourcesDisposed;
-    private bool _privacyProbeRunning;
     private bool _voiceToggleStartedByHotkey;
+    private bool _trayStartupHandled;
 
     public MainWindow(SettingsService settings, AppLogger log, ControllerRuntimeOptions options)
     {
@@ -93,6 +93,11 @@ public partial class MainWindow : Window
             {
                 NativeStatusText.Text = "Installed Qwen Desktop is not attached";
                 NativeDetailsText.Text = "Open Qwen normally, or use Attach / Open Qwen. No window state is changed while attaching.";
+            }
+            if (TrayStartupPolicy.ShouldHideAfterAttach(_settings.Current.StartControllerInTray, _qwen.IsAttached, _trayStartupHandled))
+            {
+                _trayStartupHandled = true;
+                Hide();
             }
             UpdateStatus();
         });
@@ -272,29 +277,6 @@ public partial class MainWindow : Window
     }
     private void ShowQwen_Click(object sender, RoutedEventArgs e) => ShowQwen();
     private void Click_Click(object sender, RoutedEventArgs e) { if (RequireMutation()) ToggleClickThrough(); }
-    private void Privacy_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_options.ExperimentalPrivacyHostEnabled)
-        {
-            Toast("Privacy host is disabled pending staged target-machine validation (--enable-experimental-privacy-host)");
-            return;
-        }
-        if (!RequireMutation()) return;
-        var enabled = _qwen.PrivacyState == CapturePrivacyState.Enabled;
-        var ok = enabled ? _qwen.DisablePrivacyHost() : _qwen.EnablePrivacyHost();
-        Toast(ok ? (enabled ? "Privacy host OFF; Qwen restored" : _qwen.PrivacyStatus) : _qwen.PrivacyStatus);
-        UpdateStatus();
-    }
-    private void PrivacyGdiProbe_Click(object sender, RoutedEventArgs e) { if (_options.SafeMode) return; _ = Task.Run(() => _qwen.ValidatePrivacyGdiCapture()).ContinueWith(t => QueueUi(() => { Toast("GDI capture probe: " + (t.Status == TaskStatus.RanToCompletion ? t.Result.Verdict : CaptureProbeVerdict.Failed)); UpdateStatus(); }), TaskScheduler.Default); }
-    private void PrivacyPrintWindowProbe_Click(object sender, RoutedEventArgs e) { if (_options.SafeMode) return; _ = Task.Run(() => _qwen.ValidatePrivacyPrintWindowCapture()).ContinueWith(t => QueueUi(() => { Toast("PrintWindow capture probe: " + (t.Status == TaskStatus.RanToCompletion ? t.Result.Verdict : CaptureProbeVerdict.Failed)); UpdateStatus(); }), TaskScheduler.Default); }
-    private async void PrivacyNativeProbe_Click(object sender, RoutedEventArgs e)
-    {
-        if (_options.SafeMode || _privacyProbeRunning) return;
-        _privacyProbeRunning = true;
-        try { var results = await _qwen.ValidatePrivacyNativeCapturePathsAsync().ConfigureAwait(true); Toast($"Native probes: Desktop Duplication={results.DesktopDuplication.Verdict}; WGC={results.WindowsGraphicsCapture.Verdict}"); }
-        catch { Toast("Native privacy probes failed"); }
-        finally { _privacyProbeRunning = false; UpdateStatus(); }
-    }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         // Endpoint enumeration is user-initiated and the service is retained for orderly shutdown.

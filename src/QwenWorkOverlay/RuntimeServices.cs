@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace QwenWorkOverlay;
 
-public sealed record ControllerRuntimeOptions(bool SafeMode, int? ExitAfterSeconds, bool OpacityEnabled, bool ExperimentalPrivacyHostEnabled)
+public sealed record ControllerRuntimeOptions(bool SafeMode, int? ExitAfterSeconds, bool OpacityEnabled)
 {
     public static ControllerRuntimeOptions FromArguments(IEnumerable<string> arguments)
     {
@@ -12,8 +12,7 @@ public sealed record ControllerRuntimeOptions(bool SafeMode, int? ExitAfterSecon
         return new(
             values.Any(x => string.Equals(x, "--safe-mode", StringComparison.OrdinalIgnoreCase)),
             exitAfter,
-            values.Any(x => string.Equals(x, "--enable-opacity", StringComparison.OrdinalIgnoreCase)),
-            values.Any(x => string.Equals(x, "--enable-experimental-privacy-host", StringComparison.OrdinalIgnoreCase)));
+            values.Any(x => string.Equals(x, "--enable-opacity", StringComparison.OrdinalIgnoreCase)));
     }
 }
 
