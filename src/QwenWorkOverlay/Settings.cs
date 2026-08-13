@@ -4,7 +4,8 @@ namespace QwenWorkOverlay;
 
 public sealed class AppSettings
 {
-    public double Opacity { get; set; } = .85;
+    public int SettingsVersion { get; set; } = 2;
+    public double Opacity { get; set; } = 1.0;
     public bool TopMost { get; set; } = true;
     public bool AutoLaunchQwen { get; set; } = true;
     public bool StartControllerInTray { get; set; } = true;
@@ -43,7 +44,16 @@ public sealed class SettingsService
             LastPersistenceError = "Settings load failed: " + ex.GetType().Name;
         }
 
+        var migrated = Current.SettingsVersion < 2;
+        if (migrated)
+        {
+            Current.Opacity = 1.0;
+            Current.SettingsVersion = 2;
+        }
+
         Normalize();
+        if (migrated)
+            Save();
     }
 
     public bool Save()
@@ -68,6 +78,7 @@ public sealed class SettingsService
 
     private void Normalize()
     {
+        Current.SettingsVersion = Math.Max(Current.SettingsVersion, 2);
         Current.Opacity = Math.Clamp(Current.Opacity, .35, 1.0);
         Current.MicGain = Math.Clamp(Current.MicGain, 0f, 4f);
         Current.SystemGain = Math.Clamp(Current.SystemGain, 0f, 4f);
