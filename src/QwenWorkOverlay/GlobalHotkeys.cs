@@ -12,7 +12,6 @@ public sealed class GlobalHotkeys : IDisposable
     private readonly HwndSource _source;
     private readonly Action<int> _action;
     private readonly AppLogger _log;
-    private readonly Action? _emergencyAction;
     private readonly RightCtrlStateMachine _rightCtrl = new();
     private readonly List<HotkeyRegistration> _registrations = new();
     private bool _voiceToggleActive;
@@ -70,11 +69,10 @@ public sealed class GlobalHotkeys : IDisposable
         }
     }
 
-    public GlobalHotkeys(Action<int> action, AppLogger log, Action? emergencyAction = null)
+    public GlobalHotkeys(Action<int> action, AppLogger log)
     {
         _action = action;
         _log = log;
-        _emergencyAction = emergencyAction;
         _source = new HwndSource(new HwndSourceParameters("QDC_Hotkeys")
         {
             Width = 0,
@@ -94,7 +92,6 @@ public sealed class GlobalHotkeys : IDisposable
         Register(8, "Ctrl+Alt+D Diagnostics", MOD_CONTROL | MOD_ALT, 0x44);
         Register(9, "F6 Screenshot", 0, 0x75);
         Register(10, "Shift+F6 Monitor screenshot", MOD_SHIFT, 0x75);
-        Register(11, "Ctrl+Alt+Esc Emergency restore/exit", MOD_CONTROL | MOD_ALT, 0x1B);
         Register(VoiceToggleHotkeyId, "Ctrl+Shift+R Qwen voice toggle", MOD_CONTROL | MOD_SHIFT, 0x52);
 
         _hookProc = KeyboardHook;
@@ -119,11 +116,7 @@ public sealed class GlobalHotkeys : IDisposable
         if (message == WM_HOTKEY)
         {
             var id = wParam.ToInt32();
-            if (id == 11 && _emergencyAction is not null)
-            {
-                QueueWork(_emergencyAction);
-            }
-            else if (id == VoiceToggleHotkeyId)
+            if (id == VoiceToggleHotkeyId)
             {
                 _voiceToggleActive = !_voiceToggleActive;
                 var active = _voiceToggleActive;

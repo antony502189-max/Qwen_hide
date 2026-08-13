@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private AudioDefaultDeviceGuard? _deviceGuard;
     private MixedAudioSession? _audio;
     private GlobalHotkeys? _hotkeys;
+    private EmergencyHotkey? _emergencyHotkey;
     private Forms.NotifyIcon? _tray;
     private bool _resourcesDisposed;
     private bool _voiceToggleStartedByHotkey;
@@ -53,7 +54,8 @@ public partial class MainWindow : Window
         Left = pos.X;
         Top = pos.Y;
         CreateTrayIcon();
-        _hotkeys = new GlobalHotkeys(HandleHotkey, _log, _emergency.RequestExit);
+        _hotkeys = new GlobalHotkeys(HandleHotkey, _log);
+        _emergencyHotkey = new EmergencyHotkey(_emergency.RequestExit, _log);
         _hotkeys.RightCtrlChanged += RightCtrlChanged;
         _hotkeys.VoiceToggleChanged += VoiceToggleChanged;
         if (!_hotkeys.AllRegistered) StatusText.Text = "Some global hotkeys are unavailable: " + _hotkeys.FailureSummary;
@@ -293,10 +295,13 @@ public partial class MainWindow : Window
     private void FreezeForEmergencyExit()
     {
         _qwen.FreezeMutations();
-        lock (_audioGate)
+        if (!Monitor.TryEnter(_audioGate))
         {
-            try { _audio?.Stop(); } catch { }
+            _log.Error("Emergency recovery skipped audio stop because the audio gate was busy");
+            return;
         }
+        try { _audio?.Stop(); } catch { }
+        finally { Monitor.Exit(_audioGate); }
     }
 
     private void DisposeRuntimeResources(bool saveControllerPosition)
@@ -308,6 +313,7 @@ public partial class MainWindow : Window
         try { _qwen.Dispose(); } catch { }
         try { _foregroundTracker.Dispose(); } catch { }
         try { _hotkeys?.Dispose(); } catch { }
+        try { _emergencyHotkey?.Dispose(); } catch { }
         try { _tray?.Dispose(); } catch { }
         try { _devices?.Dispose(); } catch { }
         if (saveControllerPosition) { _settings.Current.ControllerX = Left; _settings.Current.ControllerY = Top; _settings.Save(); }
