@@ -248,13 +248,17 @@ public partial class MainWindow : Window
     private async void ShowDiagnostics()
     {
         var target = _qwen.Target;
-        var window = new Window { Title = "Qwen Desktop Controller Diagnostics", Width = 620, Height = 640, Owner = this, Content = new System.Windows.Controls.TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto, Text = BuildCachedDiagnostics(target) } };
+        var window = new Window { Title = "Qwen Desktop Controller Diagnostics", Width = 620, Height = 640, Content = new System.Windows.Controls.TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto, Text = BuildCachedDiagnostics(target) } };
+        // A WPF owned window inherits the hidden state of its tray-host owner. Diagnostics must
+        // remain reachable through Ctrl+Alt+D even after the controller panel has gone to tray.
+        if (IsVisible) window.Owner = this;
         window.Show();
+        window.Activate();
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var metrics = await _diagnostics.CollectAsync(target, timeout.Token);
-            if (window.Content is System.Windows.Controls.TextBox box && window.IsVisible) box.Text = BuildCachedDiagnostics(target) + "\n\n" + FormatProcess("Controller", metrics.Controller) + "\n" + FormatProcess("Qwen", metrics.Qwen) + $"\nDispatcher latency: UI updates are queued (no synchronous Dispatcher.Invoke)\nLast keyboard-hook callback: {_hotkeys?.LastHookDuration.TotalMilliseconds:F3} ms\nAsync log messages dropped: {_log.DroppedMessageCount}";
+            if (window.Content is System.Windows.Controls.TextBox box && window.IsVisible) box.Text = BuildCachedDiagnostics(target) + "\n\n" + FormatProcess("Controller", metrics.Controller) + "\n" + FormatProcess("Qwen", metrics.Qwen) + $"\nDispatcher latency: UI updates are queued (no synchronous Dispatcher.Invoke)\nLast keyboard-hook callback: {_hotkeys?.LastHookDuration.TotalMilliseconds:F3} ms\nAsync log messages accepted/minute: {_log.AcceptedMessagesPerMinute:F1}\nAsync log messages dropped: {_log.DroppedMessageCount}\nOriginal/current parent: {FormatHwnd(_qwen.OriginalParent)}/{FormatHwnd(_qwen.CurrentParent)}\nRecovery journal present: {File.Exists(_recovery.JournalPath)}";
         }
         catch (Exception ex) { _log.Error("Diagnostics collection failed: " + ex.GetType().Name); }
     }
@@ -262,7 +266,7 @@ public partial class MainWindow : Window
     private string BuildCachedDiagnostics(QwenTarget? target) =>
         $"Controller version: {GetType().Assembly.GetName().Version}\nController PID: {Environment.ProcessId}\nSafe mode: {_options.SafeMode}\nQwen attached: {_qwen.IsAttached}\nQwen PID: {target?.ProcessId}\nQwen HWND: {FormatHwnd(target?.Hwnd ?? IntPtr.Zero)}\nQwen class: {target?.WindowClass}\nQwen executable: {target?.ExecutablePath}\nAttach state: observational\nOpacity: {_qwen.Opacity:P0}\nTopMost: {_qwen.TopMost}\nClick-through: {_qwen.ClickThrough}\nPrivacy host: {_qwen.PrivacyStatus}\nWDA requested/verified: 0x{_qwen.RequestedAffinity:X}/0x{_qwen.VerifiedAffinity:X}\nHotkeys: {_hotkeys?.FailureSummary ?? "initializing"}\nRight Ctrl hook: {(_hotkeys?.HookReady == true ? "READY" : "FAILED")}\nAudio: {(_audio?.Running == true ? "running" : "disabled/idle")}\nAudio pump last/max: {_audio?.LastPumpDuration.TotalMilliseconds:F3}/{_audio?.MaxPumpDuration.TotalMilliseconds:F3} ms\nRecovery journal: {_recovery.JournalPath}\nLog: {_log.LogPath}\n\nCollecting process metrics asynchronously…";
 
-    private static string FormatProcess(string label, ProcessDiagnostics value) => $"{label}: PID={value.Pid}, CPU={value.CpuPercent:F2}%, Working set={value.WorkingSetBytes / 1024d / 1024d:F1} MiB, Threads={value.ThreadCount}, Handles={value.HandleCount}, State={value.State}";
+    private static string FormatProcess(string label, ProcessDiagnostics value) => $"{label}: PID={value.Pid}, CPU={value.CpuPercent:F2}%, Working set={value.WorkingSetBytes / 1024d / 1024d:F1} MiB, Threads={value.ThreadCount}, Handles={value.HandleCount}, GDI={value.GdiObjectCount}, USER={value.UserObjectCount}, State={value.State}";
     private static string FormatHwnd(IntPtr hwnd) => hwnd == IntPtr.Zero ? "n/a" : $"0x{hwnd.ToInt64():X}";
 
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }

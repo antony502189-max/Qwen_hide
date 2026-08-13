@@ -13,6 +13,8 @@ internal static class Native
     public const long WS_CHILD = 0x40000000L;
     public const long WS_POPUP = unchecked((long)0x80000000L);
     public const uint LWA_ALPHA = 0x00000002;
+    public const uint GR_GDIOBJECTS = 0;
+    public const uint GR_USEROBJECTS = 1;
     public const uint WDA_NONE = 0x00000000;
     public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
 
@@ -114,6 +116,9 @@ internal static class Native
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetGuiResources(IntPtr process, uint flags);
 
     public delegate void WinEventDelegate(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint eventThread, uint eventTime);
 

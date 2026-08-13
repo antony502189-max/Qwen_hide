@@ -68,14 +68,22 @@ public sealed class QwenSessionMonitor : IDisposable
     }
 }
 
-public sealed record ProcessDiagnostics(int? Pid, double CpuPercent, long WorkingSetBytes, int ThreadCount, int HandleCount, string State);
+public sealed record ProcessDiagnostics(
+    int? Pid,
+    double CpuPercent,
+    long WorkingSetBytes,
+    int ThreadCount,
+    int HandleCount,
+    uint GdiObjectCount,
+    uint UserObjectCount,
+    string State);
 
 public sealed class DiagnosticsService
 {
     public async Task<(ProcessDiagnostics Controller, ProcessDiagnostics Qwen)> CollectAsync(QwenTarget? target, CancellationToken cancellationToken)
     {
         var controllerTask = SampleAsync(Environment.ProcessId, cancellationToken);
-        var qwenTask = target is null ? Task.FromResult(new ProcessDiagnostics(null, 0, 0, 0, 0, "not attached")) : SampleAsync(target.ProcessId, cancellationToken);
+        var qwenTask = target is null ? Task.FromResult(new ProcessDiagnostics(null, 0, 0, 0, 0, 0, 0, "not attached")) : SampleAsync(target.ProcessId, cancellationToken);
         await Task.WhenAll(controllerTask, qwenTask).ConfigureAwait(false);
         return (await controllerTask.ConfigureAwait(false), await qwenTask.ConfigureAwait(false));
     }
@@ -85,16 +93,18 @@ public sealed class DiagnosticsService
         try
         {
             using var process = Process.GetProcessById(processId);
-            if (process.HasExited) return new(processId, 0, 0, 0, 0, "exited");
+            if (process.HasExited) return new(processId, 0, 0, 0, 0, 0, 0, "exited");
             var cpu0 = process.TotalProcessorTime;
             var wall0 = Stopwatch.GetTimestamp();
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
             process.Refresh();
             var elapsed = (Stopwatch.GetTimestamp() - wall0) / (double)Stopwatch.Frequency;
             var cpu = elapsed <= 0 ? 0 : Math.Max(0, (process.TotalProcessorTime - cpu0).TotalSeconds / (elapsed * Environment.ProcessorCount) * 100);
-            return new(processId, cpu, process.WorkingSet64, process.Threads.Count, process.HandleCount, process.HasExited ? "exited" : "running");
+            var gdi = Native.GetGuiResources(process.Handle, Native.GR_GDIOBJECTS);
+            var user = Native.GetGuiResources(process.Handle, Native.GR_USEROBJECTS);
+            return new(processId, cpu, process.WorkingSet64, process.Threads.Count, process.HandleCount, gdi, user, process.HasExited ? "exited" : "running");
         }
-        catch (Exception ex) { return new(processId, 0, 0, 0, 0, ex.GetType().Name); }
+        catch (Exception ex) { return new(processId, 0, 0, 0, 0, 0, 0, ex.GetType().Name); }
     }
 }
 

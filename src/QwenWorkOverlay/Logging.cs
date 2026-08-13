@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text;
 
 namespace QwenWorkOverlay;
@@ -16,6 +17,8 @@ public sealed class AppLogger : IDisposable
     private readonly Task _writer;
     private int _queued;
     private int _dropped;
+    private long _accepted;
+    private readonly long _startedTicks = Stopwatch.GetTimestamp();
     private int _disposed;
 
     public AppLogger()
@@ -28,6 +31,15 @@ public sealed class AppLogger : IDisposable
 
     public string LogPath => _path;
     public int DroppedMessageCount => Volatile.Read(ref _dropped);
+    public long AcceptedMessageCount => Interlocked.Read(ref _accepted);
+    public double AcceptedMessagesPerMinute
+    {
+        get
+        {
+            var elapsed = (Stopwatch.GetTimestamp() - _startedTicks) / (double)Stopwatch.Frequency;
+            return elapsed <= 0 ? 0 : AcceptedMessageCount / elapsed * 60;
+        }
+    }
     public void Info(string text) => Enqueue("INFO", text);
     public void Error(string text) => Enqueue("ERROR", text);
 
@@ -41,6 +53,7 @@ public sealed class AppLogger : IDisposable
             return;
         }
         _queue.Enqueue($"{DateTimeOffset.Now:O} [{level}] {text}");
+        Interlocked.Increment(ref _accepted);
         _signal.Release();
     }
 

@@ -128,7 +128,11 @@ public sealed class GlobalHotkeys : IDisposable
             }
             else
             {
-                QueueWork(() => _action(id));
+                QueueWork(() =>
+                {
+                    _log.Info("Global hotkey queued: id=" + id);
+                    _action(id);
+                });
             }
             handled = true;
         }
