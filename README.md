@@ -26,11 +26,11 @@ It does **not** embed `qwen.ai`, does not create a second Qwen session, and does
 - verified restoration of Qwen window styles when the controller exits;
 - no automatic changes to Windows default or communications audio devices.
 
-## Important capture-privacy limitation
+## Capture privacy: conservative experimental host
 
-The installed Qwen window belongs to the Qwen process, not this controller. Safe native mode therefore does **not** claim `WDA_EXCLUDEFROMCAPTURE` support for the Qwen window. The controller deliberately avoids DLL injection, binary patching or replacing Qwen with an embedded web client just to fake this checkbox.
+The controller never applies `SetWindowDisplayAffinity` directly to Qwen's foreign top-level HWND. Its optional **Toggle Privacy Host** command instead creates a controller-owned top-level host, verifies `WDA_EXCLUDEFROMCAPTURE` with `GetWindowDisplayAffinity`, then reparents the real installed Qwen window into that host.
 
-If you need privacy during a work share, prefer sharing a specific application/window rather than the whole desktop whenever the conferencing software supports it. Full-screen capture behavior must be tested with the exact conferencing software you use.
+Entering this mode requires a verified on-disk recovery record of Qwen's original parent, styles, placement, visibility, topmost state and DPI. A failed affinity/DPI/parenting check rolls back and does not report privacy as enabled. Diagnostics distinguishes verified host affinity from actual capture-pipeline compatibility: Teams, Zoom, Google Meet and Yandex Telemost full-monitor sharing still require the manual checks below.
 
 ## Quick start
 
@@ -61,6 +61,7 @@ This writes `artifacts\runtime-probe.json` without collecting chat text, Clipboa
 | `Ctrl+Alt+Up/Down` | Opacity ±5% |
 | `Ctrl+Alt+V` | Paste Clipboard into Qwen |
 | `Ctrl+Alt+D` | Diagnostics |
+| `Ctrl+Alt+P` | Show current privacy-host status |
 | `F6` | Last non-Qwen work window → Clipboard |
 | `Shift+F6` | Current monitor → Clipboard |
 | hold `Right Ctrl` | Run configured Qwen-only audio mix |
@@ -68,6 +69,6 @@ This writes `artifacts\runtime-probe.json` without collecting chat text, Clipboa
 
 ## Quality gates
 
-Windows CI rejects any reintroduced WebView2 Qwen wrapper, then performs restore, Release build, automated tests, self-contained win-x64 publish, release-payload verification, SHA-256 generation, and artifact upload. Automated tests include a real Win32 HWND recovery test in addition to pure mixer/style/state tests.
+Windows CI rejects any reintroduced WebView2 Qwen wrapper, then performs restore, Release build, automated tests, self-contained win-x64 publish, release-payload verification, SHA-256 generation, and artifact upload. Automated tests include real Win32 HWND style/parent recovery; the real-Qwen privacy-host test is opt-in and never runs in CI.
 
 See [GUIDE_EN.md](GUIDE_EN.md), [GUIDE_RU.md](GUIDE_RU.md) and [MANUAL_TEST_CHECKLIST_EN.md](MANUAL_TEST_CHECKLIST_EN.md).

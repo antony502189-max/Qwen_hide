@@ -10,7 +10,11 @@ internal static class Native
     public const long WS_EX_TOPMOST = 0x00000008L;
     public const long WS_EX_TRANSPARENT = 0x00000020L;
     public const long WS_EX_LAYERED = 0x00080000L;
+    public const long WS_CHILD = 0x40000000L;
+    public const long WS_POPUP = unchecked((long)0x80000000L);
     public const uint LWA_ALPHA = 0x00000002;
+    public const uint WDA_NONE = 0x00000000;
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
 
     public static readonly IntPtr HWND_TOPMOST = new(-1);
     public static readonly IntPtr HWND_NOTOPMOST = new(-2);
@@ -20,6 +24,7 @@ internal static class Native
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_FRAMECHANGED = 0x0020;
+    public const uint SWP_SHOWWINDOW = 0x0040;
 
     public const int SW_HIDE = 0;
     public const int SW_SHOWMINIMIZED = 2;
@@ -107,6 +112,31 @@ internal static class Native
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetParent(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint affinity);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowDisplayAffinity(IntPtr hWnd, out uint affinity);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPlacement(IntPtr hWnd, [In] ref WINDOWPLACEMENT lpwndpl);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
 
@@ -152,6 +182,15 @@ internal static class Native
         return Math.Max(0, rect.Right - rect.Left) * (long)Math.Max(0, rect.Bottom - rect.Top);
     }
 
+    public static bool TryGetWindowPlacement(IntPtr hWnd, out WINDOWPLACEMENT placement)
+    {
+        placement = new WINDOWPLACEMENT { Length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+        return GetWindowPlacement(hWnd, ref placement);
+    }
+
+    public static bool IsMinimizedCoordinate(RECT rect) =>
+        rect.Left <= -30000 || rect.Top <= -30000 || rect.Right <= -30000 || rect.Bottom <= -30000;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
     {
@@ -160,16 +199,37 @@ internal static class Native
         public int Right;
         public int Bottom;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT
+    {
+        public int Length;
+        public int Flags;
+        public int ShowCmd;
+        public POINT PtMinPosition;
+        public POINT PtMaxPosition;
+        public RECT RcNormalPosition;
+    }
 }
 
 public enum CapturePrivacyState
 {
     UnsupportedForExternalWindow,
-    Off
+    Off,
+    Hosting,
+    Enabled,
+    Failed
 }
 
 public sealed class CaptureProtectionService
 {
-    public CapturePrivacyState State => CapturePrivacyState.UnsupportedForExternalWindow;
-    public string Status => "UNSUPPORTED (native Qwen belongs to another process)";
+    public CapturePrivacyState State { get; internal set; } = CapturePrivacyState.Off;
+    public string Status { get; internal set; } = "OFF (privacy host not enabled)";
 }

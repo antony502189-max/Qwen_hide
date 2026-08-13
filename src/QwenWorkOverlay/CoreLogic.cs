@@ -79,6 +79,23 @@ public static class NativeCapturePrivacyPolicy
     public static bool CanApplyDirectly(int controllerProcessId, int targetProcessId) => controllerProcessId == targetProcessId;
 }
 
+public enum PrivacyHostTransition
+{
+    Off,
+    Preparing,
+    Enabled,
+    Failed,
+    Restored
+}
+
+public static class PrivacyHostPolicy
+{
+    public static long ToChildStyle(long currentStyle) => (currentStyle | Native.WS_CHILD) & ~Native.WS_POPUP;
+    public static bool IsDpiCompatible(uint hostDpi, uint qwenDpi) => hostDpi != 0 && hostDpi == qwenDpi;
+    public static bool IsVerifiedAffinity(uint requested, uint verified) =>
+        requested == Native.WDA_EXCLUDEFROMCAPTURE && verified == requested;
+}
+
 public static class WindowStylePolicy
 {
     public static bool NeedsLayeredWindow(double opacity, bool clickThrough) => opacity < .999 || clickThrough;

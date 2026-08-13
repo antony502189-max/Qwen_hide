@@ -28,17 +28,13 @@ The controller only adds Windows-level conveniences around that existing window.
 - restores the Qwen window's original extended styles / TopMost state when the controller exits;
 - lives in the Windows system tray during normal use.
 
-## 3. Important limitation: capture privacy
+## 3. Capture privacy: verified host, unverified share applications
 
-The native Qwen window belongs to the Qwen process. `SetWindowDisplayAffinity` is not safely applicable to another process's top-level window from this controller.
+The native Qwen top-level window belongs to Qwen, so the controller never calls `SetWindowDisplayAffinity` on that foreign HWND. **Toggle Privacy Host** creates a normal controller-owned top-level HWND, applies `WDA_EXCLUDEFROMCAPTURE` to that host, reads it back with `GetWindowDisplayAffinity`, and only then reparents the real installed Qwen HWND as a child.
 
-For that reason the controller intentionally reports:
+Before Qwen changes parent, the recovery journal durably records and verifies its parent, style/ex-style, `WINDOWPLACEMENT`, visibility, minimized/maximized state, TopMost state and DPI. Any failed journal, DPI match, affinity verification, style change or `SetParent` check restores Qwen and leaves privacy disabled. `Ctrl+Alt+Esc`, normal shutdown, unhandled-exception cleanup and next-start stale-journal recovery use the same restoration data.
 
-`Capture privacy: UNSUPPORTED in safe native-Qwen mode`
-
-It does not patch Qwen, inject a DLL into it, or replace Qwen with a browser wrapper just to make this status appear green.
-
-For work calls, the safest practical option is to share a **specific application/window** rather than your entire desktop whenever the conferencing software supports it. Test the exact screen-sharing mode you intend to use before relying on it.
+`Privacy host ON` means the host affinity was genuinely set and read back. It does **not** mean every capture product honors it. The controller cannot certify full-monitor sharing in Teams, Zoom, Google Meet, or Yandex Telemost without observing each product's shared output. Treat an application as unsupported until it passes the manual matrix in `MANUAL_TEST_CHECKLIST_EN.md`.
 
 ## 4. Requirements
 

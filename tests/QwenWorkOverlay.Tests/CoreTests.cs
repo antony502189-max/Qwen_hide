@@ -36,7 +36,18 @@ public class CoreTests
             OriginalLayered = true,
             OriginalAlpha = 217,
             OriginalLayerFlags = 2,
-            OriginalColorKey = 42
+            OriginalColorKey = 42,
+            OriginalParent = 0x22,
+            OriginalStyle = Native.WS_POPUP | 0x00CF0000L,
+            PlacementShowCmd = 3,
+            PlacementLeft = 20,
+            PlacementTop = 30,
+            PlacementRight = 900,
+            PlacementBottom = 700,
+            OriginalDpi = 144,
+            PrivacyHostActive = true,
+            PrivacyHostHwnd = 0x33,
+            PrivacyHostDpi = 144
         };
         var json = System.Text.Json.JsonSerializer.Serialize(snapshot);
         var restored = System.Text.Json.JsonSerializer.Deserialize<WindowRecoverySnapshot>(json)!;
@@ -45,6 +56,10 @@ public class CoreTests
         Assert.Equal(snapshot.Hwnd, restored.Hwnd);
         Assert.Equal(snapshot.OriginalExStyle, restored.OriginalExStyle);
         Assert.Equal(snapshot.OriginalAlpha, restored.OriginalAlpha);
+        Assert.Equal(snapshot.OriginalParent, restored.OriginalParent);
+        Assert.Equal(snapshot.OriginalStyle, restored.OriginalStyle);
+        Assert.Equal(snapshot.PlacementBottom, restored.PlacementBottom);
+        Assert.Equal(snapshot.PrivacyHostHwnd, restored.PrivacyHostHwnd);
     }
 
     [Fact]
@@ -172,6 +187,26 @@ public class CoreTests
     {
         Assert.False(NativeCapturePrivacyPolicy.CanApplyDirectly(100, 200));
         Assert.True(NativeCapturePrivacyPolicy.CanApplyDirectly(100, 100));
+    }
+
+    [Fact]
+    public void Privacy_host_requires_verified_affinity_and_matching_nonzero_dpi()
+    {
+        Assert.True(PrivacyHostPolicy.IsVerifiedAffinity(Native.WDA_EXCLUDEFROMCAPTURE, Native.WDA_EXCLUDEFROMCAPTURE));
+        Assert.False(PrivacyHostPolicy.IsVerifiedAffinity(Native.WDA_EXCLUDEFROMCAPTURE, Native.WDA_NONE));
+        Assert.True(PrivacyHostPolicy.IsDpiCompatible(144, 144));
+        Assert.False(PrivacyHostPolicy.IsDpiCompatible(0, 144));
+        Assert.False(PrivacyHostPolicy.IsDpiCompatible(96, 144));
+    }
+
+    [Fact]
+    public void Privacy_host_child_style_is_reversible_from_the_saved_original_style()
+    {
+        const long original = Native.WS_POPUP | 0x00CF0000L;
+        var child = PrivacyHostPolicy.ToChildStyle(original);
+        Assert.NotEqual(0, child & Native.WS_CHILD);
+        Assert.Equal(0, child & Native.WS_POPUP);
+        Assert.Equal(0x00CF0000L, child & 0x00CF0000L);
     }
 
     [Fact]

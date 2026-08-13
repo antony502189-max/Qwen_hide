@@ -156,13 +156,18 @@ This test deliberately terminates the controller to simulate a crash.
 - [ ] Original Qwen extended style/TopMost/visibility is restored.
 - [ ] No recovery journal remains after verified successful restore.
 
-## L. Capture privacy limitation
+## L. Privacy host and full-monitor capture matrix
 
-- [ ] Diagnostics explicitly says safe native capture privacy is unsupported for the external Qwen HWND.
-- [ ] The controller does not show a false green `WDA_EXCLUDEFROMCAPTURE` status.
-- [ ] The controller does not inject a DLL into Qwen or patch Qwen binaries.
-- [ ] Test your real conferencing app by sharing a specific work window and confirm Qwen is not part of that shared window.
-- [ ] Do not treat full-desktop sharing as protected until you have verified it with your exact capture pipeline.
+- [ ] With Qwen visible and restored (not minimized), click **Toggle Privacy Host**.
+- [ ] Diagnostics shows a non-zero Privacy host HWND, Qwen child HWND, original/current parent, matching non-zero host/Qwen DPI, `WDA requested: 0x11`, and `WDA verified: 0x11`.
+- [ ] Local monitor: Qwen remains visible and accepts mouse, keyboard, clipboard, resize, restore and maximize operations.
+- [ ] Click **Toggle Privacy Host** again and confirm the original parent, style, ex-style, placement, visibility and TopMost state are restored. Then test `Ctrl+Alt+Esc` while host mode is ON.
+- [ ] Microsoft Teams: share the **entire monitor**; observe the remote/shared preview. Record PASS only when Qwen is locally visible but absent from shared output.
+- [ ] Zoom: share the **entire monitor**; observe the remote/shared preview and record PASS/UNSUPPORTED.
+- [ ] Google Meet: share the **entire monitor**; observe the remote/shared preview and record PASS/UNSUPPORTED.
+- [ ] Yandex Telemost: share the **entire monitor**; observe the remote/shared preview and record PASS/UNSUPPORTED.
+- [ ] Record capture APIs separately: GDI/PrintWindow results do not prove Desktop Duplication, Windows Graphics Capture, or a conferencing application's behavior.
+- [ ] The controller does not inject a DLL into Qwen, patch Qwen binaries, or claim an application is protected without the observed shared output.
 
 ## M. Build/package
 

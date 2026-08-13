@@ -32,9 +32,10 @@ public sealed class QwenProcessLocator
                 if (process.Id == currentPid) continue;
                 var processName = process.ProcessName;
                 var executable = TryGetExecutablePath(process);
-                var nameLooksRight = processName.Contains("qwen", StringComparison.OrdinalIgnoreCase) ||
-                                     string.Equals(Path.GetFileName(executable), "Qwen.exe", StringComparison.OrdinalIgnoreCase);
-                if (!nameLooksRight) continue;
+                // Process names and window titles are only discovery hints. Do not attach to an
+                // arbitrary process named "qwen" when its executable cannot be verified.
+                var executableLooksRight = IsInstalledQwenExecutable(executable);
+                if (!executableLooksRight) continue;
 
                 var startTicks = TryGetProcessStartTicks(process);
                 foreach (var hwnd in Native.EnumerateTopLevelWindows((uint)process.Id))
@@ -163,6 +164,9 @@ public sealed class QwenProcessLocator
         !string.IsNullOrWhiteSpace(path) && File.Exists(path) &&
         Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsInstalledQwenExecutable(string? path) =>
+        IsExecutable(path) && string.Equals(Path.GetFileName(path), "Qwen.exe", StringComparison.OrdinalIgnoreCase);
+
     private static void AddCandidate(List<string> list, params string[] parts)
     {
         if (parts.Any(string.IsNullOrWhiteSpace)) return;
@@ -174,6 +178,7 @@ public sealed class QwenWindowController : IDisposable
 {
     private readonly AppLogger _log;
     private readonly WindowRecoveryService _recovery;
+    private readonly PrivacyHostSession _privacy;
     private QwenTarget? _target;
     private nint _originalExStyle;
     private bool _originalTopMost;
@@ -191,6 +196,7 @@ public sealed class QwenWindowController : IDisposable
     {
         _log = log;
         _recovery = recovery ?? new WindowRecoveryService(log);
+        _privacy = new PrivacyHostSession(log, _recovery);
     }
 
     public QwenTarget? Target => _target;
@@ -199,6 +205,15 @@ public sealed class QwenWindowController : IDisposable
     public double Opacity => _opacity;
     public bool TopMost => _topMost;
     public bool Hidden => _hidden;
+    public CapturePrivacyState PrivacyState => _privacy.State;
+    public string PrivacyStatus => _privacy.Status;
+    public IntPtr PrivacyHostHwnd => _privacy.HostHwnd;
+    public IntPtr OriginalParent => _privacy.OriginalParent;
+    public IntPtr CurrentParent => _privacy.CurrentParent;
+    public uint RequestedAffinity => _privacy.RequestedAffinity;
+    public uint VerifiedAffinity => _privacy.VerifiedAffinity;
+    public uint HostDpi => _privacy.HostDpi;
+    public uint QwenDpi => _privacy.QwenDpi;
 
     public bool RecoverStaleState() => _recovery.TryRecoverStaleState();
 
@@ -249,6 +264,11 @@ public sealed class QwenWindowController : IDisposable
     public bool SetOpacity(double value)
     {
         if (!IsAttached) return false;
+        if (_privacy.State == CapturePrivacyState.Enabled)
+        {
+            _log.Error("Refusing opacity mutation while Qwen is hosted for capture privacy");
+            return false;
+        }
         value = Math.Clamp(value, .35, 1.0);
         var previous = _opacity;
         _opacity = value;
@@ -261,6 +281,11 @@ public sealed class QwenWindowController : IDisposable
     public bool SetClickThrough(bool enabled)
     {
         if (!IsAttached) return false;
+        if (_privacy.State == CapturePrivacyState.Enabled)
+        {
+            _log.Error("Refusing click-through mutation while Qwen is hosted for capture privacy");
+            return false;
+        }
         var previous = _clickThrough;
         _clickThrough = enabled;
         if (ApplyStyles()) return true;
@@ -272,6 +297,11 @@ public sealed class QwenWindowController : IDisposable
     public bool SetTopMost(bool enabled)
     {
         if (!IsAttached) return false;
+        if (_privacy.State == CapturePrivacyState.Enabled)
+        {
+            _log.Error("Refusing TopMost mutation while Qwen is hosted for capture privacy");
+            return false;
+        }
         var ok = Native.SetWindowPos(
             _target!.Hwnd,
             enabled ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST,
@@ -289,6 +319,11 @@ public sealed class QwenWindowController : IDisposable
     public bool ToggleVisibility()
     {
         if (!IsAttached) return false;
+        if (_privacy.State == CapturePrivacyState.Enabled)
+        {
+            _log.Error("Refusing visibility mutation while Qwen is hosted for capture privacy");
+            return false;
+        }
         var currentlyVisible = Native.IsWindowVisible(_target!.Hwnd);
         var ok = Native.ShowWindowAsync(_target.Hwnd, currentlyVisible ? Native.SW_HIDE : Native.SW_SHOW);
         if (!ok)
@@ -303,6 +338,11 @@ public sealed class QwenWindowController : IDisposable
     public bool ShowAndActivate()
     {
         if (!IsAttached) return false;
+        if (_privacy.State == CapturePrivacyState.Enabled)
+        {
+            _log.Error("Refusing direct Qwen activation while Qwen is hosted for capture privacy");
+            return false;
+        }
         Native.ShowWindowAsync(_target!.Hwnd, Native.SW_RESTORE);
         Native.ShowWindowAsync(_target.Hwnd, Native.SW_SHOW);
         var ok = Native.SetForegroundWindow(_target.Hwnd);
@@ -361,8 +401,41 @@ public sealed class QwenWindowController : IDisposable
         return frameOk;
     }
 
+    public bool EnablePrivacyHost()
+    {
+        if (!IsAttached || _target is null) return false;
+        if (_privacy.TryEnable(_target)) return true;
+        // The privacy session has already restored its recovery snapshot. Detach this controller's
+        // cached target so no subsequent mutation can operate on an unjournaled window.
+        Detach(restore: true);
+        return false;
+    }
+
+    public bool DisablePrivacyHost()
+    {
+        if (_privacy.State != CapturePrivacyState.Enabled) return _privacy.State == CapturePrivacyState.Off;
+        if (!_privacy.DisableAndRestore())
+        {
+            _target = null;
+            return false;
+        }
+        if (_target is null || !Native.IsWindow(_target.Hwnd)) return false;
+
+        // Privacy restore intentionally returns Qwen to the user's original state. Re-journal and
+        // apply the controller's still-selected non-privacy settings only after that restoration.
+        if (!_recovery.Save(_target, _originalExStyle, _originalTopMost, _originalVisible,
+                _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey))
+        {
+            _target = null;
+            return false;
+        }
+        return ApplyStyles() && SetTopMost(_topMost);
+    }
+
     public void Detach(bool restore)
     {
+        if (_privacy.State == CapturePrivacyState.Enabled || _privacy.State == CapturePrivacyState.Hosting)
+            _privacy.DisableAndRestore();
         var target = _target;
         _target = null;
         try

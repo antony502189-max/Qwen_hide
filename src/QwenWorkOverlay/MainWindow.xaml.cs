@@ -13,7 +13,6 @@ public partial class MainWindow : Window
     private readonly AudioDeviceService _devices = new();
     private readonly AudioDefaultDeviceGuard _deviceGuard;
     private readonly MixedAudioSession _audio;
-    private readonly CaptureProtectionService _capture = new();
     private readonly QwenProcessLocator _locator;
     private readonly QwenWindowController _qwen;
     private readonly QwenVoiceAutomation _voice;
@@ -167,7 +166,7 @@ public partial class MainWindow : Window
                     ToggleTopMost();
                     break;
                 case 4:
-                    Toast("Capture privacy is unsupported in safe native-Qwen mode");
+                    Toast(_qwen.PrivacyStatus);
                     break;
                 case 5:
                     SetOpacity(_settings.Current.Opacity + .05);
@@ -367,7 +366,7 @@ public partial class MainWindow : Window
         AudioStatusText.Text = _audio.Running
             ? $"Audio mix: {_audio.InjectionState} · mic={_audio.MicrophoneState} · system={_audio.LoopbackState}"
             : $"Audio mix: idle · mic={_audio.MicrophoneState} · system={_audio.LoopbackState} · voice={_voice.State}";
-        PrivacyStatusText.Text = "Capture privacy: UNSUPPORTED for an external native Qwen HWND without unsafe injection/replacement";
+        PrivacyStatusText.Text = "Capture privacy: " + _qwen.PrivacyStatus;
     }
 
     private void Toast(string text)
@@ -417,7 +416,16 @@ public partial class MainWindow : Window
             $"Qwen voice automation: {_voice.State}\n" +
             $"Matched voice control: {_voice.LastMatchedButton ?? "n/a"}\n" +
             $"Voice click fallback: {_voice.ClickFallbackStatus}\n\n" +
-            $"Capture privacy: {_capture.Status}\n" +
+            $"Privacy mode: {_qwen.PrivacyStatus}\n" +
+            $"Privacy host HWND: {FormatHwnd(_qwen.PrivacyHostHwnd)}\n" +
+            $"Qwen child HWND: {FormatHwnd(target?.Hwnd ?? IntPtr.Zero)}\n" +
+            $"Qwen original parent: {FormatHwnd(_qwen.OriginalParent)}\n" +
+            $"Qwen current parent: {FormatHwnd(_qwen.CurrentParent)}\n" +
+            $"WDA requested: 0x{_qwen.RequestedAffinity:X}\n" +
+            $"WDA verified: 0x{_qwen.VerifiedAffinity:X}\n" +
+            $"Host DPI: {_qwen.HostDpi}\n" +
+            $"Qwen DPI: {_qwen.QwenDpi}\n" +
+            $"Recovery state: {(_qwen.PrivacyState == CapturePrivacyState.Enabled ? "privacy-host active" : "native window journal / normal")}\n" +
             $"Windows audio defaults unchanged: {defaultsSafe}\n" +
             $"Default input before: {_deviceGuard.InputBefore}\n" +
             $"Default input current: {currentDefaultInput}\n" +
@@ -448,7 +456,26 @@ public partial class MainWindow : Window
     }
 
     private void Click_Click(object sender, RoutedEventArgs e) => ToggleClickThrough();
+    private void Privacy_Click(object sender, RoutedEventArgs e) => TogglePrivacyHost();
     private void Diagnostics_Click(object sender, RoutedEventArgs e) => ShowDiagnostics();
+
+    private void TogglePrivacyHost()
+    {
+        EnsureAttached(allowLaunch: false);
+        if (!_qwen.IsAttached)
+        {
+            Toast("Qwen is not attached");
+            return;
+        }
+        var enabled = _qwen.PrivacyState == CapturePrivacyState.Enabled;
+        var ok = enabled ? _qwen.DisablePrivacyHost() : _qwen.EnablePrivacyHost();
+        Toast(ok
+            ? (enabled ? "Privacy host OFF; Qwen restored" : "Privacy host ON; WDA verified")
+            : _qwen.PrivacyStatus);
+        UpdateStatus();
+    }
+
+    private static string FormatHwnd(IntPtr hwnd) => hwnd == IntPtr.Zero ? "0x0" : $"0x{hwnd.ToInt64():X}";
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
