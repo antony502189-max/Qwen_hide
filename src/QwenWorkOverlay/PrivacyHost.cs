@@ -18,17 +18,18 @@ internal sealed class PrivacyHostWindow : Window
 
     public PrivacyHostWindow(Native.RECT qwenRect, uint qwenDpi)
     {
-        var scale = qwenDpi == 0 ? 1d : 96d / qwenDpi;
+        var bounds = PrivacyHostGeometryPolicy.FromQwenPhysicalBounds(
+            qwenRect.Left, qwenRect.Top, qwenRect.Right, qwenRect.Bottom, qwenDpi);
         Title = "Qwen Privacy Host";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.CanResize;
         ShowInTaskbar = true;
         AllowsTransparency = false; // WDA must target a normal top-level HWND, not a layered WPF window.
         Background = System.Windows.Media.Brushes.Black;
-        Left = qwenRect.Left * scale;
-        Top = qwenRect.Top * scale;
-        Width = Math.Max(1, (qwenRect.Right - qwenRect.Left) * scale);
-        Height = Math.Max(1, (qwenRect.Bottom - qwenRect.Top) * scale);
+        Left = bounds.Left;
+        Top = bounds.Top;
+        Width = bounds.Width;
+        Height = bounds.Height;
         SizeChanged += (_, _) =>
         {
             if (!ResizeChild()) ChildResizeFailed?.Invoke(this, EventArgs.Empty);

@@ -98,6 +98,24 @@ public static class PrivacyHostPolicy
         hostContext != IntPtr.Zero && qwenContext != IntPtr.Zero && Native.AreDpiAwarenessContextsEqual(hostContext, qwenContext);
 }
 
+public readonly record struct PrivacyHostBounds(double Left, double Top, double Width, double Height);
+
+public static class PrivacyHostGeometryPolicy
+{
+    // WPF sizes are DIPs while GetWindowRect supplies physical pixels. This conversion is used
+    // only after the host/Qwen DPI compatibility gate has established a non-zero shared DPI.
+    public static PrivacyHostBounds FromQwenPhysicalBounds(int left, int top, int right, int bottom, uint dpi)
+    {
+        if (dpi == 0) throw new ArgumentOutOfRangeException(nameof(dpi));
+        var scale = 96d / dpi;
+        return new PrivacyHostBounds(
+            left * scale,
+            top * scale,
+            Math.Max(1, (right - left) * scale),
+            Math.Max(1, (bottom - top) * scale));
+    }
+}
+
 public enum CaptureProbeVerdict
 {
     NotRun,

@@ -201,6 +201,27 @@ public class CoreTests
         Assert.False(PrivacyHostPolicy.IsDpiCompatible(96, 144));
     }
 
+    [Theory]
+    [InlineData(96u, 320d, 100d, 1280d, 840d)]
+    [InlineData(120u, 256d, 80d, 1024d, 672d)]
+    [InlineData(144u, 213.333333d, 66.666667d, 853.333333d, 560d)]
+    public void Privacy_host_geometry_converts_physical_qwen_bounds_for_100_125_and_150_percent_dpi(
+        uint dpi, double expectedLeft, double expectedTop, double expectedWidth, double expectedHeight)
+    {
+        var bounds = PrivacyHostGeometryPolicy.FromQwenPhysicalBounds(320, 100, 1600, 940, dpi);
+        Assert.Equal(expectedLeft, bounds.Left, 5);
+        Assert.Equal(expectedTop, bounds.Top, 5);
+        Assert.Equal(expectedWidth, bounds.Width, 5);
+        Assert.Equal(expectedHeight, bounds.Height, 5);
+    }
+
+    [Fact]
+    public void Privacy_host_geometry_refuses_zero_dpi()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PrivacyHostGeometryPolicy.FromQwenPhysicalBounds(0, 0, 100, 100, 0));
+    }
+
     [Fact]
     public void Privacy_host_child_style_is_reversible_from_the_saved_original_style()
     {
