@@ -1,5 +1,6 @@
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using System.Diagnostics;
 
 namespace QwenWorkOverlay;
 
@@ -192,9 +193,14 @@ public sealed class MixedAudioSession : IDisposable
     private BufferedWaveProvider? _mixedProvider;
     private System.Threading.Timer? _pump;
     private int _generation;
+    private int _pumpInFlight;
+    private int _microphoneQueuedFrames;
+    private int _loopbackQueuedFrames;
     private long _microphoneBytes;
     private long _loopbackBytes;
     private long _mixedFrames;
+    private long _lastPumpDurationTicks;
+    private long _maxPumpDurationTicks;
 
     public bool MicrophoneReady { get; private set; }
     public bool LoopbackReady { get; private set; }
@@ -203,6 +209,8 @@ public sealed class MixedAudioSession : IDisposable
     public long MicrophoneBytes => Interlocked.Read(ref _microphoneBytes);
     public long LoopbackBytes => Interlocked.Read(ref _loopbackBytes);
     public long MixedFrames => Interlocked.Read(ref _mixedFrames);
+    public TimeSpan LastPumpDuration => TimeSpan.FromSeconds(Interlocked.Read(ref _lastPumpDurationTicks) / (double)Stopwatch.Frequency);
+    public TimeSpan MaxPumpDuration => TimeSpan.FromSeconds(Interlocked.Read(ref _maxPumpDurationTicks) / (double)Stopwatch.Frequency);
     public string MicrophoneState { get; private set; } = "Idle";
     public string LoopbackState { get; private set; } = "Idle";
     public string VirtualOutputState { get; private set; } = "Not configured";
@@ -223,6 +231,11 @@ public sealed class MixedAudioSession : IDisposable
             var generation = ++_generation;
             _microphoneFrames.Clear();
             _loopbackFrames.Clear();
+            Interlocked.Exchange(ref _microphoneQueuedFrames, 0);
+            Interlocked.Exchange(ref _loopbackQueuedFrames, 0);
+            Interlocked.Exchange(ref _pumpInFlight, 0);
+            Interlocked.Exchange(ref _lastPumpDurationTicks, 0);
+            Interlocked.Exchange(ref _maxPumpDurationTicks, 0);
             Interlocked.Exchange(ref _microphoneBytes, 0);
             Interlocked.Exchange(ref _loopbackBytes, 0);
             Interlocked.Exchange(ref _mixedFrames, 0);
@@ -264,7 +277,7 @@ public sealed class MixedAudioSession : IDisposable
             {
                 if (generation != Volatile.Read(ref _generation)) return;
                 Interlocked.Add(ref _microphoneBytes, e.BytesRecorded);
-                Enqueue(_microphoneFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, format));
+                Enqueue(_microphoneFrames, ref _microphoneQueuedFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, format));
             };
             capture.RecordingStopped += (_, e) =>
             {
@@ -302,7 +315,7 @@ public sealed class MixedAudioSession : IDisposable
             {
                 if (generation != Volatile.Read(ref _generation)) return;
                 Interlocked.Add(ref _loopbackBytes, e.BytesRecorded);
-                Enqueue(_loopbackFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, format));
+                Enqueue(_loopbackFrames, ref _loopbackQueuedFrames, AudioFormatConverter.ToMonoFloat48k(e.Buffer, e.BytesRecorded, format));
             };
             capture.RecordingStopped += (_, e) =>
             {
@@ -373,19 +386,19 @@ public sealed class MixedAudioSession : IDisposable
 
     private void Pump(float micGain, float systemGain, int generation)
     {
-        if (generation != Volatile.Read(ref _generation)) return;
-        var provider = _mixedProvider;
-        if (provider is null) return;
-
-        TrimLatency(_microphoneFrames);
-        TrimLatency(_loopbackFrames);
-        var microphone = Dequeue(PumpFrames, _microphoneFrames);
-        var loopback = Dequeue(PumpFrames, _loopbackFrames);
-        var mixed = AudioMixer.Mix(microphone, loopback, micGain, systemGain);
-        var bytes = new byte[mixed.Length * sizeof(float)];
-        Buffer.BlockCopy(mixed, 0, bytes, 0, bytes.Length);
+        if (generation != Volatile.Read(ref _generation) || Interlocked.Exchange(ref _pumpInFlight, 1) != 0) return;
+        var started = Stopwatch.GetTimestamp();
         try
         {
+            var provider = _mixedProvider;
+            if (provider is null) return;
+            TrimLatency(_microphoneFrames, ref _microphoneQueuedFrames);
+            TrimLatency(_loopbackFrames, ref _loopbackQueuedFrames);
+            var microphone = Dequeue(PumpFrames, _microphoneFrames, ref _microphoneQueuedFrames);
+            var loopback = Dequeue(PumpFrames, _loopbackFrames, ref _loopbackQueuedFrames);
+            var mixed = AudioMixer.Mix(microphone, loopback, micGain, systemGain);
+            var bytes = new byte[mixed.Length * sizeof(float)];
+            Buffer.BlockCopy(mixed, 0, bytes, 0, bytes.Length);
             provider.AddSamples(bytes, 0, bytes.Length);
             Interlocked.Add(ref _mixedFrames, mixed.Length);
         }
@@ -393,6 +406,17 @@ public sealed class MixedAudioSession : IDisposable
         {
             if (generation == Volatile.Read(ref _generation))
                 _log?.Error("Mixed audio provider failed: " + ex.GetType().Name);
+        }
+        finally
+        {
+            var elapsed = Stopwatch.GetTimestamp() - started;
+            Interlocked.Exchange(ref _lastPumpDurationTicks, elapsed);
+            while (true)
+            {
+                var previous = Interlocked.Read(ref _maxPumpDurationTicks);
+                if (elapsed <= previous || Interlocked.CompareExchange(ref _maxPumpDurationTicks, elapsed, previous) == previous) break;
+            }
+            Volatile.Write(ref _pumpInFlight, 0);
         }
     }
 
@@ -429,23 +453,28 @@ public sealed class MixedAudioSession : IDisposable
         if (VirtualOutputState.StartsWith("READY", StringComparison.Ordinal)) VirtualOutputState = "Idle";
     }
 
-    private static void Enqueue(ConcurrentQueue<float> queue, float[] samples)
+    private static void Enqueue(ConcurrentQueue<float> queue, ref int queuedFrames, float[] samples)
     {
+        Interlocked.Add(ref queuedFrames, samples.Length);
         foreach (var sample in samples) queue.Enqueue(sample);
-        if (queue.Count > MaxQueuedFrames)
-            while (queue.Count > TrimToFrames && queue.TryDequeue(out _)) { }
+        TrimLatency(queue, ref queuedFrames);
     }
 
-    private static void TrimLatency(ConcurrentQueue<float> queue)
+    private static void TrimLatency(ConcurrentQueue<float> queue, ref int queuedFrames)
     {
-        if (queue.Count <= MaxQueuedFrames) return;
-        while (queue.Count > TrimToFrames && queue.TryDequeue(out _)) { }
+        if (Volatile.Read(ref queuedFrames) <= MaxQueuedFrames) return;
+        while (Volatile.Read(ref queuedFrames) > TrimToFrames && queue.TryDequeue(out _))
+            Interlocked.Decrement(ref queuedFrames);
     }
 
-    private static float[] Dequeue(int count, ConcurrentQueue<float> queue)
+    private static float[] Dequeue(int count, ConcurrentQueue<float> queue, ref int queuedFrames)
     {
         var result = new float[count];
-        for (var i = 0; i < count && queue.TryDequeue(out var sample); i++) result[i] = sample;
+        for (var i = 0; i < count && queue.TryDequeue(out var sample); i++)
+        {
+            result[i] = sample;
+            Interlocked.Decrement(ref queuedFrames);
+        }
         return result;
     }
 

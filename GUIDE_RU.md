@@ -10,8 +10,8 @@ Controller добавляет Windows-функции вокруг настоящ
 
 ## Основные функции
 
-- прозрачность настоящего окна Qwen: 35–100%;
-- Always-on-top;
+- opt-in прозрачность настоящего окна Qwen: 35–100%;
+- opt-in Always-on-top;
 - обратимый click-through — Qwen виден, но мышь проходит в окно под ним;
 - hide/show без закрытия Qwen;
 - F6: последнее рабочее окно → Windows Clipboard;
@@ -166,17 +166,13 @@ Controller намеренно не переписывает глобальный
 
 Если default endpoints отличаются — audio-функцию нельзя считать принятой до выяснения причины.
 
-## Capture Privacy — экспериментальный host с честной проверкой
+## Capture Privacy — не поддерживается на этой машине
 
-Верхнеуровневое окно установленного Qwen принадлежит процессу Qwen. Controller **никогда** не вызывает `SetWindowDisplayAffinity` для этого чужого HWND. Команда **Toggle Privacy Host** создаёт обычное верхнеуровневое окно, принадлежащее Controller, применяет к нему `WDA_EXCLUDEFROMCAPTURE`, сразу читает состояние через `GetWindowDisplayAffinity` и только затем делает реальное окно Qwen дочерним.
+Верхнеуровневое окно установленного Qwen принадлежит процессу Qwen. Microsoft документирует `SetWindowDisplayAffinity` только для top-level окна текущего процесса. Controller не внедряется в Qwen и не патчит его, поэтому не может безопасно назначить это свойство чужому HWND.
 
-До изменения parent на диске сохраняются и проверяются исходные parent, style/ex-style, `WINDOWPLACEMENT`, видимость, minimized/maximized, TopMost, DPI и DPI-awareness context. Режим не включится без DWM composition, совпадающих DPI/context, подтверждённого affinity и проверенного `SetParent`; DPI/context child повторно читаются после cross-process `SetParent`, а каждый resize host обязан успешно изменить размер child. Автоматическая проверка geometry покрывает DPI 100%, 125% и 150%; live host всё равно откажется от любого фактического DPI/context mismatch. Любой сбой откатывает Qwen. `Ctrl+Alt+Esc`, штатное завершение и восстановление после сбоя используют тот же journal.
+Проверенный ранее вариант controller-owned host с cross-process `SetParent` жёстко отключён: при staged-проверке Qwen 1.0.3 Chromium-окно не меняло размер вслед за host. Такая архитектура может оставить нативный Qwen в сломанном или тормозящем состоянии. Поэтому Controller показывает **UNSUPPORTED ON TARGET MACHINE** и не заявляет защиту для GDI, Desktop Duplication, Windows Graphics Capture, Teams, Zoom, Google Meet или Yandex Telemost.
 
-`Privacy host ON` означает только то, что affinity controller-owned host действительно установлен и прочитан обратно. Это **не** сертификат для любого capture pipeline. На целевой машине GDI screen copy показывал `Exposed` и `Inconclusive`; direct `PrintWindow` вернул однородный `Inconclusive`; Desktop Duplication и full-monitor Windows Graphics Capture показывали `RedactedPlaceholder` — содержимое Qwen не наблюдалось, но host не доказанно отсутствует. Teams, Zoom, Google Meet и Yandex Telemost всё ещё требуют отдельного наблюдения shared output.
-
-Кнопка **Validate PrintWindow** вызывает `PrintWindow` только для controller-owned host и анализирует в памяти сетку 24x24 без сохранения изображения. `Exposed` означает, что этот direct-window API отрисовал неоднородное содержимое host. Пустой или однородный результат — только `Inconclusive`; он ничего не доказывает о full-monitor share.
-
-Кнопка Controller **Validate Native Capture APIs** запускает packaged `privacy-capture-probe.exe` и `privacy-wgc-capture-probe.exe` для Desktop Duplication и full-monitor Windows Graphics Capture, записывая в Diagnostics только агрегированные результаты. Probes кратко скрывают/восстанавливают host и не сохраняют screenshots или chat data. Их также можно запустить из папки release как `privacy-capture-probe.exe 0xHOSTHWND` и `privacy-wgc-capture-probe.exe 0xHOSTHWND` (HWND берётся из Diagnostics). Результаты разных API нельзя переносить друг на друга.
+Не делись конфиденциальным содержимым Qwen через full-monitor share, рассчитывая на этот controller. Будущая замена требует документированного Windows-native механизма и отдельной проверки отзывчивости Qwen.
 
 ## Runtime probe именно твоего Qwen
 

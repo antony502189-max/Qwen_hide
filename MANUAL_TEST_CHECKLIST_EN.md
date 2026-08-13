@@ -157,25 +157,13 @@ This test deliberately terminates the controller to simulate a crash.
 - [ ] Original Qwen extended style/TopMost/visibility is restored.
 - [ ] No recovery journal remains after verified successful restore.
 
-## L. Privacy host and full-monitor capture matrix
+## L. Privacy limitation — target-machine result
 
-- [ ] With Qwen visible and restored (not minimized), click **Toggle Privacy Host**.
-- [ ] Diagnostics shows a non-zero Privacy host HWND, Qwen child HWND, original/current parent, matching non-zero host/Qwen DPI, `WDA requested: 0x11`, and `WDA verified: 0x11`.
-- [ ] Click **Validate GDI Capture** and record its exact result. A matching sample is always `Inconclusive`; `Exposed`, `RedactedPlaceholder`, and `Inconclusive` are not strict capture-exclusion passes.
-- [ ] Click **Validate PrintWindow** and record its exact result. This is only a direct controller-host window-capture test; `Exposed` means this API rendered host content, while a blank/uniform result remains `Inconclusive`.
-- [x] Target-machine result (Windows 10 19045 x64, Qwen 1.0.3): direct `PrintWindow` rendered a uniform sample (visible variance 0.0), so it is **Inconclusive**, not a capture-exclusion or conferencing pass.
-- [x] Target-machine result (Windows 10 19045 x64, Qwen 1.0.3): distributed GDI screen-copy has returned **Exposed** (observed difference 43.5; visible variance 1973.3), which proves this pipeline can capture real Qwen content and is unsupported. Later samples may be **Inconclusive**; matching pixels do not reverse that finding.
-- [x] Target-machine result: Desktop Duplication returned **RedactedPlaceholder** (difference 33.7; visible variance 0.0; hidden variance 2539.8). Qwen content was not observed, but the captured surface was not proven absent; do not call this strict `WDA_EXCLUDEFROMCAPTURE` PASS.
-- [x] Target-machine result: full-monitor Windows Graphics Capture has returned **RedactedPlaceholder** (latest run: difference 176.2; visible variance 0.0; hidden variance 1571.9); earlier samples were inconclusive. Neither result proves host absence or a conferencing-app pass.
-- [ ] Local monitor: Qwen remains visible and accepts mouse, keyboard, clipboard, resize, restore and maximize operations.
-- [x] Target-machine automated exercise: controller-host resize changed the hosted real Qwen dimensions, and both forced-host-close and normal-disable paths restored the original Qwen geometry.
-- [ ] Click **Toggle Privacy Host** again and confirm the original parent, style, ex-style, placement, visibility and TopMost state are restored. Then test `Ctrl+Alt+Esc` while host mode is ON.
-- [ ] Microsoft Teams: share the **entire monitor**; observe the remote/shared preview. Record PASS only when Qwen is locally visible but absent from shared output.
-- [ ] Zoom: share the **entire monitor**; observe the remote/shared preview and record PASS/UNSUPPORTED.
-- [ ] Google Meet: share the **entire monitor**; observe the remote/shared preview and record PASS/UNSUPPORTED.
-- [ ] Yandex Telemost: share the **entire monitor**; observe the remote/shared preview and record PASS/UNSUPPORTED.
-- [ ] Record capture APIs separately: GDI/PrintWindow, Desktop Duplication, and Windows Graphics Capture results do not prove a conferencing application's behavior.
-- [ ] The controller does not inject a DLL into Qwen, patch Qwen binaries, or claim an application is protected without the observed shared output.
+- [x] Staged target-machine test: the reparented Qwen 1.0.3 Chromium window did not follow a controller-host resize after cross-process `SetParent`.
+- [x] The controller hard-disables the privacy-host architecture and reports **UNSUPPORTED ON TARGET MACHINE** without mutating Qwen.
+- [x] The controller does not inject a DLL into Qwen, patch Qwen binaries, or claim capture protection for a foreign HWND.
+- [ ] A future replacement must use a documented, safe Windows-native capability and independently validate Qwen responsiveness before any conferencing claim.
+- [ ] Teams, Zoom, Google Meet, and Yandex Telemost remain **UNSUPPORTED/UNVERIFIED** for same-monitor full-share exclusion.
 
 ## M. Build/package
 

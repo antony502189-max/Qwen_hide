@@ -12,8 +12,8 @@ The controller only adds Windows-level conveniences around that existing window.
 
 - automatically discovers a running Qwen Desktop process/window;
 - can launch an existing `Qwen.exe` when its path is known or auto-detected;
-- applies adjustable whole-window opacity to the real Qwen window;
-- toggles TopMost on the real Qwen window;
+- provides opt-in whole-window opacity after a target-machine compositor check;
+- toggles opt-in TopMost on the real Qwen window;
 - toggles reversible mouse click-through on the real Qwen window;
 - hides/shows Qwen without terminating it;
 - captures the last non-Qwen work window directly to the Clipboard with `F6`;
@@ -28,19 +28,13 @@ The controller only adds Windows-level conveniences around that existing window.
 - restores the Qwen window's original extended styles / TopMost state when the controller exits;
 - lives in the Windows system tray during normal use.
 
-## 3. Capture privacy: verified host, unverified share applications
+## 3. Capture privacy: unsupported on this target machine
 
-The native Qwen top-level window belongs to Qwen, so the controller never calls `SetWindowDisplayAffinity` on that foreign HWND. **Toggle Privacy Host** creates a normal controller-owned top-level HWND, applies `WDA_EXCLUDEFROMCAPTURE` to that host, reads it back with `GetWindowDisplayAffinity`, and only then reparents the real installed Qwen HWND as a child.
+The native Qwen top-level window belongs to the Qwen process. The controller neither injects into nor patches Qwen, so it cannot safely ask Windows to apply capture exclusion to Qwen's foreign HWND.
 
-Before Qwen changes parent, the recovery journal durably records and verifies its parent, style/ex-style, `WINDOWPLACEMENT`, visibility, minimized/maximized state, TopMost state, DPI, and DPI-awareness context. The host must have both matching non-zero window DPI and an equivalent awareness context, and DWM composition must be enabled. The child DPI/context is read again after cross-process `SetParent`, and every host resize must successfully resize the Qwen child; either failure restores Qwen and disables privacy. Automated geometry checks cover 100%, 125%, and 150% DPI conversion; the live host still refuses any actual DPI/context mismatch. `Ctrl+Alt+Esc`, normal shutdown, unhandled-exception cleanup and next-start stale-journal recovery use the same restoration data.
+The controller-owned host plus cross-process `SetParent` experiment is hard-disabled. During staged validation on this Qwen 1.0.3 target, the reparented Chromium window did not follow host resizing. This makes the architecture unsafe for normal use even when host affinity can be read back. The controller therefore reports **UNSUPPORTED ON TARGET MACHINE** and makes no claim of full-monitor exclusion for GDI, Desktop Duplication, Windows Graphics Capture, Teams, Zoom, Google Meet, or Yandex Telemost.
 
-`Privacy host ON` means the host affinity was genuinely set and read back. It does **not** mean every capture product honors it. The controller cannot certify full-monitor sharing in Teams, Zoom, Google Meet, or Yandex Telemost without observing each product's shared output. Treat an application as unsupported until it passes the manual matrix in `MANUAL_TEST_CHECKLIST_EN.md`.
-
-The optional **Validate GDI Capture** action samples four bounded patches while the active host is visible and briefly hidden. It stores only aggregate pixel statistics, not images. Its result is explicitly limited to legacy GDI screen copying. A matching visible/hidden sample is always `Inconclusive`, because it cannot prove host absence; `RedactedPlaceholder` means content was redacted but the host was not proven absent; `Exposed` means host content was captured. None establishes behavior for Desktop Duplication, Windows Graphics Capture, or conferencing software.
-
-**Validate PrintWindow** samples only a 24x24 grid from an in-memory `PrintWindow` render of the controller-owned host. An `Exposed` result means that direct window-capture API rendered non-uniform host content. A blank or uniform render is only `Inconclusive`, and neither result says anything about full-monitor sharing. No image, chat content, or screenshot file is retained.
-
-The controller's **Validate Native Capture APIs** action invokes the packaged `privacy-capture-probe.exe` and `privacy-wgc-capture-probe.exe` for **Desktop Duplication** and full-monitor **Windows Graphics Capture**. It records only their bounded aggregate-pixel result lines in Diagnostics and briefly hides/restores the host; no screenshots or files are created. The helpers may also be run manually with `0xHOSTHWND` from Diagnostics. `RedactedPlaceholder` protects Qwen content but is still not proof that the host is absent from a full-monitor share; a matching sample is reported as `Inconclusive`.
+Only an application-owned, documented capture-exclusion capability—or a future safe Windows-native alternative—can change this conclusion. Do not share confidential Qwen content in a full-monitor share expecting this controller to hide it.
 
 ## 4. Requirements
 
@@ -110,7 +104,7 @@ If Qwen is not detected, open **Settings** and browse to the installed `Qwen.exe
 
 ## 8. Transparency
 
-Default opacity is 85%.
+Default opacity is 100%.
 
 Use:
 
@@ -119,7 +113,7 @@ Use:
 
 Allowed range: 35%–100%.
 
-The controller modifies the real Qwen top-level window style and uses layered-window alpha. The change is reversible. If your particular Qwen build renders incorrectly when layered transparency is applied, restore opacity to 100% and report the diagnostics (window class + executable version/path).
+Opacity is disabled by default. Enable it only with `--enable-opacity` after a target-machine compositor test. The controller modifies the real Qwen top-level window style and uses layered-window alpha; if rendering degrades, restore opacity to 100% and keep the feature disabled.
 
 ## 9. Click-through
 
@@ -312,9 +306,9 @@ The controller intentionally refuses to render the mix to a normal physical spea
 
 Open Diagnostics. If the calibrated click cannot be verified, start Qwen Voice manually. The audio mixer remains independent of voice recording.
 
-### Capture privacy is not a full-share pass
+### Capture privacy is unsupported on this target
 
-The controller never fakes affinity on Qwen's foreign HWND: privacy mode applies and verifies it only on the controller-owned host. A verified host is still not proof that a particular capture API or conferencing product excludes it. On the target machine GDI has shown **Exposed** and inconclusive samples; direct `PrintWindow` returned a uniform, **Inconclusive** host render; Desktop Duplication and Windows Graphics Capture have shown **RedactedPlaceholder** samples. Validate each full-monitor share application separately.
+The cross-process privacy host is disabled because the real Qwen window failed its resize validation after `SetParent`. The controller makes no full-monitor capture-exclusion claim. Use application/window sharing that you can manually verify, or do not share confidential Qwen content.
 
 ## 20. Building from source
 

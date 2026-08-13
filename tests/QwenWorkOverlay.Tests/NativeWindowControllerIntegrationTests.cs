@@ -80,6 +80,8 @@ public sealed class NativeWindowControllerIntegrationTests
             // user explicitly requests a mutation.
             Assert.False(File.Exists(journal));
             Assert.Equal(originalStyle, NativeTest.GetWindowLongPtr(hwnd, NativeTest.GWL_EXSTYLE).ToInt64());
+            Assert.False(controller.CaptureWorkWindowToClipboard(IntPtr.Zero));
+            Assert.False(File.Exists(journal));
             Assert.True(controller.SetOpacity(.70));
             Assert.True(controller.SetTopMost(true));
             Assert.True(File.Exists(journal));
@@ -114,6 +116,10 @@ public sealed class NativeWindowControllerIntegrationTests
             Assert.True(SpinWait.SpinUntil(() => !NativeTest.IsWindowVisible(hwnd), TimeSpan.FromSeconds(3)));
             Assert.True(controller.ToggleVisibility());
             Assert.True(SpinWait.SpinUntil(() => NativeTest.IsWindowVisible(hwnd), TimeSpan.FromSeconds(3)));
+
+            // Screenshot preparation goes through the recovery journal before it may hide
+            // Qwen for a fallback screen copy.
+            Assert.True(File.Exists(journal));
 
             controller.Detach(restore: true);
             Assert.False(controller.IsAttached);

@@ -96,28 +96,6 @@ jobs:
           & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\calibrate-qwen-voice-click.ps1 -CompileOnly
           if ($LASTEXITCODE -ne 0) { throw "Voice calibration helper compile failed with exit code $LASTEXITCODE" }
 
-      - name: Windows PowerShell 5.1 native capture privacy probes build
-        shell: pwsh
-        run: |
-          $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-          $cppWinRtRoot = Join-Path $env:RUNNER_TEMP ('qdc-cppwinrt-' + [guid]::NewGuid().ToString('N'))
-          $cppWinRtPackage = Join-Path $cppWinRtRoot 'Microsoft.Windows.CppWinRT.2.0.230706.1.nupkg'
-          $cppWinRtExtracted = Join-Path $cppWinRtRoot 'package'
-          $cppWinRtGenerated = Join-Path $cppWinRtRoot 'generated'
-          New-Item -ItemType Directory -Path $cppWinRtRoot -Force | Out-Null
-          & curl.exe --fail --location --retry 3 --output $cppWinRtPackage 'https://www.nuget.org/api/v2/package/Microsoft.Windows.CppWinRT/2.0.230706.1'
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $cppWinRtPackage)) { throw 'Unable to download the pinned Microsoft.Windows.CppWinRT package.' }
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::ExtractToDirectory($cppWinRtPackage, $cppWinRtExtracted)
-          $cppWinRtGenerator = Join-Path $cppWinRtExtracted 'bin\cppwinrt.exe'
-          if (-not (Test-Path $cppWinRtGenerator)) { throw 'C++/WinRT package does not contain cppwinrt.exe.' }
-          & $cppWinRtGenerator -input local -output $cppWinRtGenerated -base
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $cppWinRtGenerated 'winrt\base.h'))) { throw 'C++/WinRT header generation failed.' }
-          & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\build-privacy-capture-probe.ps1 -CppWinRtInclude $cppWinRtGenerated
-          if ($LASTEXITCODE -ne 0) { throw "Native capture privacy probe compilation failed with exit code $LASTEXITCODE" }
-          if (-not (Test-Path .\tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe)) { throw 'Privacy capture probe executable was not created.' }
-          if (-not (Test-Path .\tools\PrivacyCaptureProbe\bin\privacy-wgc-capture-probe.exe)) { throw 'Windows Graphics Capture privacy probe executable was not created.' }
-
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
 
@@ -140,18 +118,12 @@ jobs:
           foreach ($name in $extras) { Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist' $name) -Force; Copy-Item (Join-Path 'scripts' $name) (Join-Path 'dist-single' $name) -Force }
           $docs = @('README.md','GUIDE_EN.md','GUIDE_RU.md','MANUAL_TEST_CHECKLIST_EN.md','RUN_ME_FIRST_RU.txt')
           foreach ($name in $docs) { Copy-Item $name (Join-Path 'dist' $name) -Force; Copy-Item $name (Join-Path 'dist-single' $name) -Force }
-          $probe = '.\tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe'
-          $wgcProbe = '.\tools\PrivacyCaptureProbe\bin\privacy-wgc-capture-probe.exe'
-          Copy-Item $probe (Join-Path 'dist' 'privacy-capture-probe.exe') -Force
-          Copy-Item $probe (Join-Path 'dist-single' 'privacy-capture-probe.exe') -Force
-          Copy-Item $wgcProbe (Join-Path 'dist' 'privacy-wgc-capture-probe.exe') -Force
-          Copy-Item $wgcProbe (Join-Path 'dist-single' 'privacy-wgc-capture-probe.exe') -Force
 
       - name: Verify release payloads and generate hashes
         shell: pwsh
         run: |
           foreach ($dir in @('dist','dist-single')) {
-            $required = @('QwenDesktopController.exe','privacy-capture-probe.exe','privacy-wgc-capture-probe.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
+            $required = @('QwenDesktopController.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','measure-controller-performance.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
             foreach ($name in $required) {
               $path = Join-Path $dir $name
               if (-not (Test-Path $path)) { throw "Required release file not found: $path" }

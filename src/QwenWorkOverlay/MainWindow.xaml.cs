@@ -207,14 +207,14 @@ public partial class MainWindow : Window
     {
         if (_options.SafeMode) { Toast("SAFE MODE blocks screenshots"); return; }
         var hwnd = _foregroundTracker.LastNonQwenWindow;
-        var result = hwnd != IntPtr.Zero && await StaWork.RunAsync(() => ScreenshotService.CaptureWindowToClipboard(hwnd, _qwen.Target?.Hwnd ?? IntPtr.Zero));
+        var result = hwnd != IntPtr.Zero && await StaWork.RunAsync(() => _qwen.CaptureWorkWindowToClipboard(hwnd));
         Toast(result ? "Screenshot copied" : "Screenshot failed");
     }
 
     private async Task CaptureMonitorAsync()
     {
         if (_options.SafeMode) { Toast("SAFE MODE blocks screenshots"); return; }
-        var result = await StaWork.RunAsync(() => ScreenshotService.CaptureMonitorToClipboard(_qwen.Target?.Hwnd ?? IntPtr.Zero));
+        var result = await StaWork.RunAsync(_qwen.CaptureMonitorToClipboard);
         Toast(result ? "Monitor screenshot copied" : "Screenshot failed");
     }
 
@@ -253,7 +253,7 @@ public partial class MainWindow : Window
     }
 
     private string BuildCachedDiagnostics(QwenTarget? target) =>
-        $"Controller version: {GetType().Assembly.GetName().Version}\nController PID: {Environment.ProcessId}\nSafe mode: {_options.SafeMode}\nQwen attached: {_qwen.IsAttached}\nQwen PID: {target?.ProcessId}\nQwen HWND: {FormatHwnd(target?.Hwnd ?? IntPtr.Zero)}\nQwen class: {target?.WindowClass}\nQwen executable: {target?.ExecutablePath}\nAttach state: observational\nOpacity: {_qwen.Opacity:P0}\nTopMost: {_qwen.TopMost}\nClick-through: {_qwen.ClickThrough}\nPrivacy host: {_qwen.PrivacyStatus}\nWDA requested/verified: 0x{_qwen.RequestedAffinity:X}/0x{_qwen.VerifiedAffinity:X}\nHotkeys: {_hotkeys?.FailureSummary ?? "initializing"}\nRight Ctrl hook: {(_hotkeys?.HookReady == true ? "READY" : "FAILED")}\nAudio: {(_audio?.Running == true ? "running" : "disabled/idle")}\nRecovery journal: {_recovery.JournalPath}\nLog: {_log.LogPath}\n\nCollecting process metrics asynchronously…";
+        $"Controller version: {GetType().Assembly.GetName().Version}\nController PID: {Environment.ProcessId}\nSafe mode: {_options.SafeMode}\nQwen attached: {_qwen.IsAttached}\nQwen PID: {target?.ProcessId}\nQwen HWND: {FormatHwnd(target?.Hwnd ?? IntPtr.Zero)}\nQwen class: {target?.WindowClass}\nQwen executable: {target?.ExecutablePath}\nAttach state: observational\nOpacity: {_qwen.Opacity:P0}\nTopMost: {_qwen.TopMost}\nClick-through: {_qwen.ClickThrough}\nPrivacy host: {_qwen.PrivacyStatus}\nWDA requested/verified: 0x{_qwen.RequestedAffinity:X}/0x{_qwen.VerifiedAffinity:X}\nHotkeys: {_hotkeys?.FailureSummary ?? "initializing"}\nRight Ctrl hook: {(_hotkeys?.HookReady == true ? "READY" : "FAILED")}\nAudio: {(_audio?.Running == true ? "running" : "disabled/idle")}\nAudio pump last/max: {_audio?.LastPumpDuration.TotalMilliseconds:F3}/{_audio?.MaxPumpDuration.TotalMilliseconds:F3} ms\nRecovery journal: {_recovery.JournalPath}\nLog: {_log.LogPath}\n\nCollecting process metrics asynchronously…";
 
     private static string FormatProcess(string label, ProcessDiagnostics value) => $"{label}: PID={value.Pid}, CPU={value.CpuPercent:F2}%, Working set={value.WorkingSetBytes / 1024d / 1024d:F1} MiB, Threads={value.ThreadCount}, Handles={value.HandleCount}, State={value.State}";
     private static string FormatHwnd(IntPtr hwnd) => hwnd == IntPtr.Zero ? "n/a" : $"0x{hwnd.ToInt64():X}";

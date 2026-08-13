@@ -471,6 +471,23 @@ public sealed class QwenWindowController : IDisposable
     public Task<(NativeCaptureProbeResult DesktopDuplication, NativeCaptureProbeResult WindowsGraphicsCapture)> ValidatePrivacyNativeCapturePathsAsync() =>
         _privacy.ValidateNativeCapturePathsAsync();
 
+    // Screen capture may temporarily hide Qwen to avoid copying it into a fallback screen capture.
+    // Journal before that visibility mutation so a crash or forced exit cannot leave Qwen hidden.
+    public bool CaptureWorkWindowToClipboard(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return false;
+        var qwenHwnd = _target?.Hwnd ?? IntPtr.Zero;
+        if (qwenHwnd != IntPtr.Zero && (!IsAttached || !BeginMutation())) return false;
+        return ScreenshotService.CaptureWindowToClipboard(hwnd, qwenHwnd);
+    }
+
+    public bool CaptureMonitorToClipboard()
+    {
+        var qwenHwnd = _target?.Hwnd ?? IntPtr.Zero;
+        if (qwenHwnd != IntPtr.Zero && (!IsAttached || !BeginMutation())) return false;
+        return ScreenshotService.CaptureMonitorToClipboard(qwenHwnd);
+    }
+
     public void Detach(bool restore)
     {
         if (_privacy.State == CapturePrivacyState.Enabled || _privacy.State == CapturePrivacyState.Hosting)
