@@ -24,7 +24,6 @@ public partial class MainWindow : Window
     private Forms.NotifyIcon? _tray;
     private bool _allowExit;
     private bool _launchAttempted;
-    private bool _voiceStartedByHotkey;
     private bool _voiceToggleStartedByHotkey;
     private bool _privacyProbeRunning;
     private bool _resourcesDisposed;
@@ -167,9 +166,6 @@ public partial class MainWindow : Window
                 case 3:
                     ToggleTopMost();
                     break;
-                case 4:
-                    Toast(_qwen.PrivacyStatus);
-                    break;
                 case 5:
                     SetOpacity(_settings.Current.Opacity + .05);
                     break;
@@ -257,22 +253,14 @@ public partial class MainWindow : Window
                     _settings.Current.MicGain,
                     _settings.Current.SystemGain);
 
-                _voiceStartedByHotkey = false;
-                if (_audio.VirtualOutputReady && _settings.Current.AutoToggleQwenVoiceWithRightCtrl && _qwen.Target is not null)
-                    _voiceStartedByHotkey = _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
-
-                var suffix = _voiceStartedByHotkey ? " · Qwen voice toggled ON" : string.Empty;
-                Toast((_audio.VirtualOutputReady ? "Qwen audio mix ON" : _audio.InjectionState) + suffix);
-                _log.Info("Audio mix key down: " + _audio.InjectionState + "; voice=" + _voice.State);
+                Toast(_audio.VirtualOutputReady ? "Qwen audio mix ON" : _audio.InjectionState);
+                _log.Info("Audio mix key down: " + _audio.InjectionState);
             }
             else
             {
-                if (_voiceStartedByHotkey && _qwen.Target is not null)
-                    _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
-                _voiceStartedByHotkey = false;
                 _audio.Stop();
                 Toast("Qwen audio mix OFF");
-                _log.Info("Audio mix key up; voice=" + _voice.State);
+                _log.Info("Audio mix key up");
             }
             UpdateStatus();
         });
@@ -555,14 +543,6 @@ public partial class MainWindow : Window
         _resourcesDisposed = true;
 
         _attachTimer.Stop();
-        try
-        {
-            if (_voiceStartedByHotkey && _qwen.Target is not null)
-                _voice.TryInvokeVoiceButton(_qwen.Target.Hwnd);
-        }
-        catch { }
-        _voiceStartedByHotkey = false;
-
         try
         {
             if (_voiceToggleStartedByHotkey && _qwen.Target is not null)

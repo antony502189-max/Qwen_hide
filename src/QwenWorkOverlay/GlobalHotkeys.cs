@@ -83,7 +83,6 @@ public sealed class GlobalHotkeys : IDisposable
         Register(1, "Ctrl+Alt+Q Hide/Show", MOD_CONTROL | MOD_ALT, 0x51);
         Register(2, "Ctrl+Alt+X Click-through", MOD_CONTROL | MOD_ALT, 0x58);
         Register(3, "Ctrl+Alt+T TopMost", MOD_CONTROL | MOD_ALT, 0x54);
-        Register(4, "Ctrl+Alt+P Privacy status", MOD_CONTROL | MOD_ALT, 0x50);
         Register(5, "Ctrl+Alt+Up Opacity+", MOD_CONTROL | MOD_ALT, 0x26);
         Register(6, "Ctrl+Alt+Down Opacity-", MOD_CONTROL | MOD_ALT, 0x28);
         Register(7, "Ctrl+Alt+V Paste", MOD_CONTROL | MOD_ALT, 0x56);

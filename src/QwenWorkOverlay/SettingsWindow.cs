@@ -81,9 +81,7 @@ public sealed class SettingsWindow : Window
         panel.Children.Add(gains);
 
         var right = new CheckBox { Content = "Hold Right Ctrl to feed the configured mix to the virtual cable", IsChecked = s.RightCtrlAudioEnabled, Margin = new Thickness(0, 8, 0, 0) };
-        var voiceToggle = new CheckBox { Content = "Also try to toggle Qwen's existing voice button on Right Ctrl down/up", IsChecked = s.AutoToggleQwenVoiceWithRightCtrl, Margin = new Thickness(0, 4, 0, 0) };
         panel.Children.Add(right);
-        panel.Children.Add(voiceToggle);
 
         var appAudioSettings = new Button { Content = "Open Windows per-app audio settings", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 10, 0, 0) };
         appAudioSettings.Click += (_, _) =>
@@ -142,7 +140,6 @@ public sealed class SettingsWindow : Window
             s.LoopbackDeviceId = selectedLoopback;
             s.VirtualMixOutputDeviceId = selectedVirtualMix;
             s.RightCtrlAudioEnabled = right.IsChecked == true;
-            s.AutoToggleQwenVoiceWithRightCtrl = voiceToggle.IsChecked == true;
 
             if (!float.TryParse(mg.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var micGain)) micGain = 1f;
             if (!float.TryParse(sg.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var systemGain)) systemGain = 1f;

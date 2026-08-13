@@ -24,7 +24,7 @@ The controller only adds Windows-level conveniences around that existing window.
 - mixes microphone + system audio in memory;
 - can send the mixed signal to a recognized virtual-cable render endpoint only;
 - never intentionally changes Windows default or communications audio endpoints;
-- can try to invoke Qwen's **existing** voice button through Windows UI Automation while Right Ctrl is held;
+- toggles Qwen's **existing** voice recording with `Ctrl+Shift+R` through calibrated native input;
 - restores the Qwen window's original extended styles / TopMost state when the controller exits;
 - lives in the Windows system tray during normal use.
 
@@ -99,12 +99,12 @@ If Qwen is not detected, open **Settings** and browse to the installed `Qwen.exe
 | `Ctrl+Alt+T` | Toggle always-on-top |
 | `Ctrl+Alt+Up` | Increase Qwen opacity by 5% |
 | `Ctrl+Alt+Down` | Decrease Qwen opacity by 5% |
-| `Ctrl+Alt+P` | Show the honest native-mode capture-privacy status |
 | `Ctrl+Alt+V` | Paste Clipboard contents into the real Qwen app |
 | `Ctrl+Alt+D` | Open diagnostics |
 | `F6` | Capture the last active non-Qwen work window to Clipboard |
 | `Shift+F6` | Capture the monitor under the mouse cursor to Clipboard |
-| Hold `Right Ctrl` | Enable the configured Qwen-only audio mix; optionally toggle Qwen's existing voice button |
+| `Ctrl+Shift+R` | Toggle Qwen voice recording ON/OFF |
+| Hold `Right Ctrl` | Enable the configured Qwen-only audio mix |
 
 ## 8. Transparency
 
@@ -212,9 +212,9 @@ If `Right Ctrl audio` is enabled in Settings:
 - While held, the mix is rendered only to the configured recognized virtual endpoint.
 - Right Ctrl UP stops the mixer.
 
-If `Also try to toggle Qwen's existing voice button` is enabled and the mix endpoint is ready, the controller scans the actual Qwen window through Windows UI Automation for a button whose accessible label looks like microphone/voice/audio/record. If an invokable control is found, it tries to invoke it on key-down and again on key-up.
+Right Ctrl never toggles Qwen voice recording. `Ctrl+Shift+R` is the separate dedicated voice toggle. It invokes only the real Qwen window through the saved calibrated fallback after visibility, geometry, ownership and child-window checks.
 
-This is best-effort because Qwen can change its accessibility tree. If diagnostics say no voice-like button is exposed, use Qwen's normal microphone button manually. No fake Qwen voice UI is created.
+No fake Qwen voice UI is created. If the calibrated fallback cannot be verified, it fails safely and use Qwen's normal microphone button manually.
 
 ## 15. How to verify that the controller did not break your microphone
 
@@ -306,9 +306,9 @@ Open Settings and verify:
 
 The controller intentionally refuses to render the mix to a normal physical speaker/headset endpoint.
 
-### Qwen voice does not start on Right Ctrl
+### Qwen voice does not start with Ctrl+Shift+R
 
-Open Diagnostics. If Qwen does not expose an accessible microphone/voice button, start Qwen Voice manually. The audio mixer can still work independently.
+Open Diagnostics. If the calibrated click cannot be verified, start Qwen Voice manually. The audio mixer remains independent of voice recording.
 
 ### Capture privacy is not a full-share pass
 

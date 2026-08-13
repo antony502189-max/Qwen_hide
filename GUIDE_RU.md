@@ -39,9 +39,9 @@ Controller добавляет Windows-функции вокруг настоящ
 | `Ctrl+Alt+Down` | непрозрачность -5% |
 | `Ctrl+Alt+V` | вставить Clipboard в Qwen |
 | `Ctrl+Alt+D` | Diagnostics |
-| `Ctrl+Alt+P` | показать честный статус Capture Privacy |
 | `F6` | рабочее окно → Clipboard |
 | `Shift+F6` | монитор → Clipboard |
+| `Ctrl+Shift+R` | включить/выключить запись Qwen Voice |
 | удерживать `Right Ctrl` | включить настроенный audio mix для Qwen |
 | `Ctrl+Alt+Esc` | аварийно восстановить Qwen и закрыть controller |
 
@@ -148,9 +148,8 @@ Controller намеренно не переписывает глобальный
 - стартует loopback;
 - запускается миксер;
 - если virtual output настроен, туда подаётся mixed stream;
-- при включённой опции controller дополнительно пытается найти существующую кнопку Voice в accessibility tree настоящего Qwen и вызвать её.
 
-При отпускании Right Ctrl сессия останавливается. Защита state machine не позволяет key-repeat создать несколько одинаковых сессий.
+При отпускании Right Ctrl сессия останавливается. `Right Ctrl` никогда не переключает запись Qwen Voice: для неё отдельная клавиша `Ctrl+Shift+R`, использующая сохранённую калибровку и безопасные проверки окна. Защита state machine не позволяет key-repeat создать несколько одинаковых сессий.
 
 ## Диагностика audio
 

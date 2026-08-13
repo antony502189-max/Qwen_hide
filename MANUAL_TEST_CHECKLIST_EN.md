@@ -64,6 +64,7 @@ Run these tests on the target Windows machine with the actual installed Qwen Des
 
 - [ ] `Ctrl+Alt+D` Diagnostics reports `All global hotkeys registered`.
 - [ ] Right Ctrl hook reports READY.
+- [ ] `Ctrl+Shift+R` toggles the real Qwen voice recording on the first press and off on the second press; Right Ctrl does not change voice-recording state.
 - [ ] If a hotkey is occupied by another application, Diagnostics reports the exact failed hotkey instead of silently pretending it works.
 - [ ] Holding a registered hotkey does not repeatedly retrigger it because MOD_NOREPEAT is used.
 - [ ] Right Ctrl key repeat does not start multiple audio sessions.

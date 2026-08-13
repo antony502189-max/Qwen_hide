@@ -63,9 +63,9 @@ This writes `artifacts\runtime-probe.json` without collecting chat text, Clipboa
 | `Ctrl+Alt+Up/Down` | Opacity ±5% |
 | `Ctrl+Alt+V` | Paste Clipboard into Qwen |
 | `Ctrl+Alt+D` | Diagnostics |
-| `Ctrl+Alt+P` | Show current privacy-host status |
 | `F6` | Last non-Qwen work window → Clipboard |
 | `Shift+F6` | Current monitor → Clipboard |
+| `Ctrl+Shift+R` | Toggle Qwen voice recording |
 | hold `Right Ctrl` | Run configured Qwen-only audio mix |
 | `Ctrl+Alt+Esc` | Emergency restore Qwen and exit controller |
 
