@@ -32,6 +32,22 @@ public static class QdcVoiceCalibrationNative
     [DllImport("user32.dll")]
     public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
 
@@ -63,19 +79,31 @@ foreach ($process in [System.Diagnostics.Process]::GetProcessesByName('Qwen')) {
 }
 
 if ($null -eq $target) {
-    throw 'No visible Qwen main window was found. Open Qwen Desktop first.'
+    throw 'No Qwen main window was found. Open Qwen Desktop first.'
 }
 
 $hwnd = $target.MainWindowHandle
 $previousDpi = [IntPtr]::Zero
 try {
     # Force this thread into the same physical-pixel coordinate space used by modern Chromium windows.
-    # This avoids the Win10 DPI virtualization mismatch that can make GetCursorPos and client coordinates disagree.
     $previousDpi = [QdcVoiceCalibrationNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
+
+    # Windows reports minimized top-level windows around (-32000,-32000). Restore/show Qwen before
+    # reading the geometry so calibration never stores the minimized sentinel coordinates.
+    if ([QdcVoiceCalibrationNative]::IsIconic($hwnd) -or -not [QdcVoiceCalibrationNative]::IsWindowVisible($hwnd)) {
+        Write-Host 'Qwen is minimized/hidden. Restoring it for calibration...' -ForegroundColor Yellow
+        [void][QdcVoiceCalibrationNative]::ShowWindowAsync($hwnd, 9) # SW_RESTORE
+        [void][QdcVoiceCalibrationNative]::SetForegroundWindow($hwnd)
+        Start-Sleep -Milliseconds 900
+    }
 
     $rect = New-Object QdcVoiceCalibrationNative+RECT
     if (-not [QdcVoiceCalibrationNative]::GetWindowRect($hwnd, [ref]$rect)) {
         throw 'GetWindowRect failed.'
+    }
+
+    if (($rect.Left -le -30000 -and $rect.Top -le -30000) -or $rect.Right -le $rect.Left -or $rect.Bottom -le $rect.Top) {
+        throw ("Qwen is still minimized/hidden and has unusable window coordinates: ({0},{1})-({2},{3}). Restore Qwen from the taskbar and run calibration again." -f $rect.Left,$rect.Top,$rect.Right,$rect.Bottom)
     }
 
     Write-Host ''
@@ -98,7 +126,7 @@ try {
         throw ("The mouse pointer was outside the Qwen window when calibration was captured. Cursor=({0},{1}), Qwen=({2},{3})-({4},{5}). Run again and keep the pointer on the microphone button." -f $cursor.X,$cursor.Y,$rect.Left,$rect.Top,$rect.Right,$rect.Bottom)
     }
 
-    # Also verify the topmost window under the cursor belongs to Qwen; this catches a PowerShell/overlay window covering Qwen.
+    # Verify that the top-level window under the pointer is actually Qwen.
     $under = [QdcVoiceCalibrationNative]::WindowFromPoint($cursor)
     $rootUnder = if ($under -ne [IntPtr]::Zero) { [QdcVoiceCalibrationNative]::GetAncestor($under, 2) } else { [IntPtr]::Zero }
     if ($rootUnder -ne $hwnd) {
