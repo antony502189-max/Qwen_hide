@@ -77,9 +77,31 @@ public sealed class QwenVoiceClickFallback
         }
     }
 
+    public bool TryValidate(IntPtr qwenHwnd, out string diagnostic) =>
+        TryResolveClickTarget(qwenHwnd, out _, out _, out diagnostic);
+
     public bool TryInvoke(IntPtr qwenHwnd, out string diagnostic)
     {
+        if (!TryResolveClickTarget(qwenHwnd, out var clickHwnd, out var lParam, out diagnostic)) return false;
+        var moved = PostMessage(clickHwnd, WM_MOUSEMOVE, IntPtr.Zero, lParam);
+        var down = PostMessage(clickHwnd, WM_LBUTTONDOWN, new IntPtr(MK_LBUTTON), lParam);
+        var up = PostMessage(clickHwnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
+        if (!down || !up)
+        {
+            diagnostic = $"PostMessage click failed (move={moved}, down={down}, up={up})";
+            return false;
+        }
+
+        diagnostic = $"calibrated click posted to HWND 0x{clickHwnd.ToInt64():X}";
+        _log.Info("Qwen voice calibrated click fallback invoked: " + diagnostic);
+        return true;
+    }
+
+    private bool TryResolveClickTarget(IntPtr qwenHwnd, out IntPtr clickHwnd, out IntPtr lParam, out string diagnostic)
+    {
         diagnostic = "calibrated click unavailable";
+        clickHwnd = IntPtr.Zero;
+        lParam = IntPtr.Zero;
         if (qwenHwnd == IntPtr.Zero || !Native.IsWindow(qwenHwnd))
         {
             diagnostic = "Qwen window unavailable";
@@ -152,7 +174,7 @@ public sealed class QwenVoiceClickFallback
             }
         }
 
-        var clickHwnd = WindowFromPoint(screenPoint);
+        clickHwnd = WindowFromPoint(screenPoint);
         if (clickHwnd == IntPtr.Zero) clickHwnd = qwenHwnd;
         var root = GetAncestor(clickHwnd, GA_ROOT);
         if (root != qwenHwnd)
@@ -168,18 +190,8 @@ public sealed class QwenVoiceClickFallback
             return false;
         }
 
-        var lParam = PackPoint(childPoint.X, childPoint.Y);
-        var moved = PostMessage(clickHwnd, WM_MOUSEMOVE, IntPtr.Zero, lParam);
-        var down = PostMessage(clickHwnd, WM_LBUTTONDOWN, new IntPtr(MK_LBUTTON), lParam);
-        var up = PostMessage(clickHwnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
-        if (!down || !up)
-        {
-            diagnostic = $"PostMessage click failed (move={moved}, down={down}, up={up})";
-            return false;
-        }
-
-        diagnostic = $"calibrated click posted to HWND 0x{clickHwnd.ToInt64():X}";
-        _log.Info("Qwen voice calibrated click fallback invoked: " + diagnostic);
+        lParam = PackPoint(childPoint.X, childPoint.Y);
+        diagnostic = $"calibrated click target verified at HWND 0x{clickHwnd.ToInt64():X}";
         return true;
     }
 
