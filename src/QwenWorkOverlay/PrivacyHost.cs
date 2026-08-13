@@ -20,7 +20,7 @@ internal sealed class PrivacyHostWindow : Window
     {
         var bounds = PrivacyHostGeometryPolicy.FromQwenPhysicalBounds(
             qwenRect.Left, qwenRect.Top, qwenRect.Right, qwenRect.Bottom, qwenDpi);
-        Title = "Qwen Privacy Host";
+        Title = "Окно защиты Qwen";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.CanResize;
         ShowInTaskbar = true;

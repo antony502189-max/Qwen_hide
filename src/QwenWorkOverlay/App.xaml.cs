@@ -16,8 +16,8 @@ public partial class App : System.Windows.Application
         if (!createdNew)
         {
             System.Windows.MessageBox.Show(
-                "Qwen Desktop Controller is already running. Check the system tray.",
-                "Qwen Desktop Controller",
+                "Контроллёр Qwen Desktop уже запущен. Проверьте системный трей.",
+                "Контроллёр Qwen Desktop",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             Shutdown();

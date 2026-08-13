@@ -64,8 +64,8 @@ public sealed class GlobalHotkeys : IDisposable
         get
         {
             var failed = _registrations.Where(x => !x.Registered).Select(x => $"{x.Name} (win32={x.Win32Error})").ToList();
-            if (!HookReady) failed.Add("Right Ctrl hook");
-            return failed.Count == 0 ? "All global hotkeys registered" : string.Join(", ", failed);
+            if (!HookReady) failed.Add("перехватчик Right Ctrl");
+            return failed.Count == 0 ? "Все глобальные горячие клавиши зарегистрированы" : string.Join(", ", failed);
         }
     }
 
@@ -83,16 +83,16 @@ public sealed class GlobalHotkeys : IDisposable
         _hwnd = _source.Handle;
         _source.AddHook(WndProc);
 
-        Register(1, "Ctrl+Alt+Q Hide/Show", MOD_CONTROL | MOD_ALT, 0x51);
-        Register(2, "Ctrl+Alt+X Click-through", MOD_CONTROL | MOD_ALT, 0x58);
-        Register(3, "Ctrl+Alt+T TopMost", MOD_CONTROL | MOD_ALT, 0x54);
-        Register(5, "Ctrl+Alt+Up Opacity+", MOD_CONTROL | MOD_ALT, 0x26);
-        Register(6, "Ctrl+Alt+Down Opacity-", MOD_CONTROL | MOD_ALT, 0x28);
-        Register(7, "Ctrl+Alt+V Paste", MOD_CONTROL | MOD_ALT, 0x56);
-        Register(8, "Ctrl+Alt+D Diagnostics", MOD_CONTROL | MOD_ALT, 0x44);
-        Register(9, "F6 Screenshot", 0, 0x75);
-        Register(10, "Shift+F6 Monitor screenshot", MOD_SHIFT, 0x75);
-        Register(VoiceToggleHotkeyId, "Ctrl+Shift+R Qwen voice toggle", MOD_CONTROL | MOD_SHIFT, 0x52);
+        Register(1, "Ctrl+Alt+Q Скрыть/показать Qwen", MOD_CONTROL | MOD_ALT, 0x51);
+        Register(2, "Ctrl+Alt+X Сквозные клики", MOD_CONTROL | MOD_ALT, 0x58);
+        Register(3, "Ctrl+Alt+T Поверх всех окон", MOD_CONTROL | MOD_ALT, 0x54);
+        Register(5, "Ctrl+Alt+Up Прозрачность +", MOD_CONTROL | MOD_ALT, 0x26);
+        Register(6, "Ctrl+Alt+Down Прозрачность −", MOD_CONTROL | MOD_ALT, 0x28);
+        Register(7, "Ctrl+Alt+V Вставить", MOD_CONTROL | MOD_ALT, 0x56);
+        Register(8, "Ctrl+Alt+D Диагностика", MOD_CONTROL | MOD_ALT, 0x44);
+        Register(9, "F6 Снимок рабочего окна", 0, 0x75);
+        Register(10, "Shift+F6 Снимок монитора", MOD_SHIFT, 0x75);
+        Register(VoiceToggleHotkeyId, "Ctrl+Shift+R Голосовой ввод Qwen", MOD_CONTROL | MOD_SHIFT, 0x52);
 
         _hookProc = KeyboardHook;
         _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, GetModuleHandle(null), 0);

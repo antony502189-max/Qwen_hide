@@ -58,8 +58,8 @@ public partial class MainWindow : Window
         _emergencyHotkey = new EmergencyHotkey(_emergency.RequestExit, _log);
         _hotkeys.RightCtrlChanged += RightCtrlChanged;
         _hotkeys.VoiceToggleChanged += VoiceToggleChanged;
-        if (!_hotkeys.AllRegistered) StatusText.Text = "Some global hotkeys are unavailable: " + _hotkeys.FailureSummary;
-        if (_options.SafeMode) StatusText.Text = "SAFE MODE: observational attach only; mutations, audio and screenshots are disabled.";
+        if (!_hotkeys.AllRegistered) StatusText.Text = "Некоторые глобальные горячие клавиши недоступны: " + _hotkeys.FailureSummary;
+        if (_options.SafeMode) StatusText.Text = "БЕЗОПАСНЫЙ РЕЖИМ: только наблюдательное подключение; управление окном, аудио и снимки отключены.";
         _sessionMonitor.Start();
         UpdateStatus();
     }
@@ -67,13 +67,13 @@ public partial class MainWindow : Window
     private void CreateTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Open Controller", null, (_, _) => QueueUi(ShowController));
-        menu.Items.Add("Show Qwen", null, (_, _) => QueueUi(ShowQwen));
-        menu.Items.Add("Diagnostics", null, (_, _) => QueueUi(ShowDiagnostics));
-        menu.Items.Add("Emergency Restore", null, (_, _) => _emergency.RequestExit());
+        menu.Items.Add("Открыть контроллёр", null, (_, _) => QueueUi(ShowController));
+        menu.Items.Add("Показать Qwen", null, (_, _) => QueueUi(ShowQwen));
+        menu.Items.Add("Диагностика", null, (_, _) => QueueUi(ShowDiagnostics));
+        menu.Items.Add("Аварийное восстановление", null, (_, _) => _emergency.RequestExit());
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Exit Controller", null, (_, _) => _emergency.RequestExit());
-        _tray = new Forms.NotifyIcon { Text = "Qwen Desktop Controller", Icon = System.Drawing.SystemIcons.Application, Visible = true, ContextMenuStrip = menu };
+        menu.Items.Add("Выйти из контроллёра", null, (_, _) => _emergency.RequestExit());
+        _tray = new Forms.NotifyIcon { Text = "Контроллёр Qwen Desktop", Icon = System.Drawing.SystemIcons.Application, Visible = true, ContextMenuStrip = menu };
         _tray.DoubleClick += (_, _) => QueueUi(ShowController);
     }
 
@@ -86,15 +86,15 @@ public partial class MainWindow : Window
                 if (_qwen.Target is not null) _qwen.Detach(restore: false);
                 if (_qwen.Attach(target))
                 {
-                    NativeStatusText.Text = "Observationally attached to the installed Qwen Desktop";
-                    NativeDetailsText.Text = $"{target.Summary}\n{target.ExecutablePath}\nClass: {target.WindowClass}";
+                    NativeStatusText.Text = "Подключено к установленному Qwen Desktop в режиме наблюдения";
+                    NativeDetailsText.Text = $"{target.Summary}\n{target.ExecutablePath}\nКласс: {target.WindowClass}";
                     _log.Info("Native Qwen attached observationally");
                 }
             }
             else if (target is null && !_qwen.IsAttached)
             {
-                NativeStatusText.Text = "Installed Qwen Desktop is not attached";
-                NativeDetailsText.Text = "Open Qwen normally, or use Attach / Open Qwen. No window state is changed while attaching.";
+                NativeStatusText.Text = "Установленный Qwen Desktop не подключён";
+                NativeDetailsText.Text = "Откройте Qwen обычным способом или нажмите «Подключить / открыть Qwen». При подключении состояние окна не меняется.";
             }
             if (TrayStartupPolicy.ShouldHideAfterAttach(_settings.Current.StartControllerInTray, _qwen.IsAttached, _trayStartupHandled))
             {
@@ -118,7 +118,7 @@ public partial class MainWindow : Window
         if (!_qwen.IsAttached) _sessionMonitor.CheckNow();
         switch (id)
         {
-            case 1: if (!_options.SafeMode && !_qwen.ToggleVisibility()) Toast("Qwen is not attached"); break;
+            case 1: if (!_options.SafeMode && !_qwen.ToggleVisibility()) Toast("Qwen не подключён"); break;
             case 2: if (!RequireMutation()) break; ToggleClickThrough(); break;
             case 3: if (!RequireMutation()) break; ToggleTopMost(); break;
             case 5: if (RequireMutation()) SetOpacity(_settings.Current.Opacity + .05); break;
@@ -133,20 +133,20 @@ public partial class MainWindow : Window
 
     private bool RequireMutation()
     {
-        if (_options.SafeMode) { Toast("SAFE MODE blocks Qwen mutation"); return false; }
-        if (!_qwen.IsAttached) { Toast("Qwen is not attached"); return false; }
+        if (_options.SafeMode) { Toast("Безопасный режим блокирует изменение окна Qwen"); return false; }
+        if (!_qwen.IsAttached) { Toast("Qwen не подключён"); return false; }
         return true;
     }
 
     private void VoiceToggleChanged(bool active) => QueueUi(() =>
     {
-        if (_options.SafeMode) { Toast("SAFE MODE blocks voice automation"); return; }
+        if (_options.SafeMode) { Toast("Безопасный режим блокирует голосовой ввод"); return; }
         var hwnd = _qwen.Target?.Hwnd ?? IntPtr.Zero;
-        if (hwnd == IntPtr.Zero) { _sessionMonitor.CheckNow(); Toast("Qwen is not attached"); return; }
+        if (hwnd == IntPtr.Zero) { _sessionMonitor.CheckNow(); Toast("Qwen не подключён"); return; }
         _ = Task.Run(() => _voice.TryInvokeVoiceButton(hwnd)).ContinueWith(t => QueueUi(() =>
         {
             _voiceToggleStartedByHotkey = active && t.Status == TaskStatus.RanToCompletion && t.Result;
-            Toast(_voiceToggleStartedByHotkey ? "Qwen voice recording toggled" : _voice.State);
+            Toast(_voiceToggleStartedByHotkey ? "Голосовой ввод Qwen переключён" : UiText.VoiceState(_voice.State));
             UpdateStatus();
         }), TaskScheduler.Default);
     });
@@ -179,15 +179,15 @@ public partial class MainWindow : Window
     private void ToggleClickThrough()
     {
         var requested = !_qwen.ClickThrough;
-        if (_qwen.SetClickThrough(requested)) { _settings.Current.ClickThrough = requested; _settings.Save(); Toast($"Click-through {(requested ? "ON" : "OFF")}"); }
-        else Toast("Click-through failed");
+        if (_qwen.SetClickThrough(requested)) { _settings.Current.ClickThrough = requested; _settings.Save(); Toast($"Сквозные клики: {UiText.Switch(requested)}"); }
+        else Toast("Не удалось изменить режим сквозных кликов");
     }
 
     private void ToggleTopMost()
     {
         var requested = !_qwen.TopMost;
-        if (_qwen.SetTopMost(requested)) { _settings.Current.TopMost = requested; _settings.Save(); Toast($"Qwen TopMost {(requested ? "ON" : "OFF")}"); }
-        else Toast("TopMost change failed");
+        if (_qwen.SetTopMost(requested)) { _settings.Current.TopMost = requested; _settings.Save(); Toast($"Поверх всех окон: {UiText.Switch(requested)}"); }
+        else Toast("Не удалось изменить режим «поверх всех окон»");
     }
 
     private void SetOpacity(double value)
@@ -195,60 +195,60 @@ public partial class MainWindow : Window
         value = Math.Clamp(value, .35, 1);
         if (value < .999 && !_options.OpacityEnabled)
         {
-            Toast("Opacity is disabled until this Qwen build passes a target-machine compositor test (--enable-opacity)");
+            Toast("Прозрачность отключена до прохождения теста композитора на этом компьютере (--enable-opacity)");
             return;
         }
-        if (_qwen.SetOpacity(value)) { _settings.Current.Opacity = value; _settings.Save(); Toast($"Qwen opacity {value:P0}"); }
-        else Toast("Opacity change failed or unsupported by Qwen compositor");
+        if (_qwen.SetOpacity(value)) { _settings.Current.Opacity = value; _settings.Save(); Toast($"Прозрачность Qwen: {value:P0}"); }
+        else Toast("Не удалось изменить прозрачность: композитор Qwen не поддерживает операцию");
     }
 
     private async Task PasteClipboardIntoQwenAsync()
     {
-        if (_options.SafeMode) { Toast("SAFE MODE blocks paste"); return; }
-        if (!_qwen.ShowAndActivate()) { Toast("Qwen is not attached"); return; }
+        if (_options.SafeMode) { Toast("Безопасный режим блокирует вставку"); return; }
+        if (!_qwen.ShowAndActivate()) { Toast("Qwen не подключён"); return; }
         await Task.Delay(140);
-        try { Forms.SendKeys.SendWait("^v"); Toast("Clipboard pasted into Qwen"); } catch { Toast("Clipboard paste failed; use Ctrl+V manually"); }
+        try { Forms.SendKeys.SendWait("^v"); Toast("Содержимое буфера обмена вставлено в Qwen"); } catch { Toast("Не удалось вставить из буфера обмена; используйте Ctrl+V вручную"); }
     }
 
     private async Task CaptureWorkWindowAsync()
     {
-        if (_options.SafeMode) { Toast("SAFE MODE blocks screenshots"); return; }
+        if (_options.SafeMode) { Toast("Безопасный режим блокирует снимки экрана"); return; }
         var hwnd = _foregroundTracker.LastNonQwenWindow;
         var result = hwnd != IntPtr.Zero && await StaWork.RunAsync(() => _qwen.CaptureWorkWindowToClipboard(hwnd));
-        Toast(result ? "Screenshot copied" : "Screenshot failed");
+        Toast(result ? "Снимок скопирован в буфер обмена" : "Не удалось сделать снимок");
     }
 
     private async Task CaptureMonitorAsync()
     {
-        if (_options.SafeMode) { Toast("SAFE MODE blocks screenshots"); return; }
+        if (_options.SafeMode) { Toast("Безопасный режим блокирует снимки экрана"); return; }
         var result = await StaWork.RunAsync(_qwen.CaptureMonitorToClipboard);
-        Toast(result ? "Monitor screenshot copied" : "Screenshot failed");
+        Toast(result ? "Снимок монитора скопирован в буфер обмена" : "Не удалось сделать снимок");
     }
 
     private void UpdateStatus()
     {
         if (_qwen.IsAttached && _qwen.Target is { } target)
         {
-            NativeStatusText.Text = "Observationally attached to the installed Qwen Desktop";
+            NativeStatusText.Text = "Подключено к установленному Qwen Desktop в режиме наблюдения";
             NativeDetailsText.Text = $"{target.Summary} · {target.WindowTitle}";
-            WindowStatusText.Text = $"Opacity {_qwen.Opacity:P0} · TopMost {(_qwen.TopMost ? "ON" : "OFF")} · Click-through {(_qwen.ClickThrough ? "ON" : "OFF")}";
+            WindowStatusText.Text = $"Прозрачность {_qwen.Opacity:P0} · Поверх всех окон {UiText.Switch(_qwen.TopMost)} · Сквозные клики {UiText.Switch(_qwen.ClickThrough)}";
         }
-        else WindowStatusText.Text = "Window controls: waiting for the installed Qwen Desktop";
+        else WindowStatusText.Text = "Управление окном: ожидание установленного Qwen Desktop";
         var audio = _audio;
-        AudioStatusText.Text = audio is null ? "Audio mix: disabled until explicitly enabled" : audio.Running ? "Audio mix: " + audio.InjectionState : "Audio mix: idle";
-        PrivacyStatusText.Text = "Capture privacy: " + _qwen.PrivacyStatus;
+        AudioStatusText.Text = audio is null ? "Аудиомикс: отключён до явного включения" : audio.Running ? "Аудиомикс: " + UiText.AudioState(audio.InjectionState) : "Аудиомикс: ожидание";
+        PrivacyStatusText.Text = "Защита демонстрации: " + UiText.PrivacyStatus(_qwen.PrivacyStatus);
     }
 
     private void Toast(string text)
     {
         StatusText.Text = text;
-        if (!IsVisible && _tray is not null) { _tray.BalloonTipTitle = "Qwen Desktop Controller"; _tray.BalloonTipText = text; _tray.ShowBalloonTip(1200); }
+        if (!IsVisible && _tray is not null) { _tray.BalloonTipTitle = "Контроллёр Qwen Desktop"; _tray.BalloonTipText = text; _tray.ShowBalloonTip(1200); }
     }
 
     private async void ShowDiagnostics()
     {
         var target = _qwen.Target;
-        var window = new Window { Title = "Qwen Desktop Controller Diagnostics", Width = 620, Height = 640, Content = new System.Windows.Controls.TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto, Text = BuildCachedDiagnostics(target) } };
+        var window = new Window { Title = "Диагностика контроллёра Qwen Desktop", Width = 680, Height = 640, Content = new System.Windows.Controls.TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto, Text = BuildCachedDiagnostics(target) } };
         // A WPF owned window inherits the hidden state of its tray-host owner. Diagnostics must
         // remain reachable through Ctrl+Alt+D even after the controller panel has gone to tray.
         if (IsVisible) window.Owner = this;
@@ -258,19 +258,19 @@ public partial class MainWindow : Window
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var metrics = await _diagnostics.CollectAsync(target, timeout.Token);
-            if (window.Content is System.Windows.Controls.TextBox box && window.IsVisible) box.Text = BuildCachedDiagnostics(target) + "\n\n" + FormatProcess("Controller", metrics.Controller) + "\n" + FormatProcess("Qwen", metrics.Qwen) + $"\nDispatcher latency: UI updates are queued (no synchronous Dispatcher.Invoke)\nLast keyboard-hook callback: {_hotkeys?.LastHookDuration.TotalMilliseconds:F3} ms\nAsync log messages accepted/minute: {_log.AcceptedMessagesPerMinute:F1}\nAsync log messages dropped: {_log.DroppedMessageCount}\nOriginal/current parent: {FormatHwnd(_qwen.OriginalParent)}/{FormatHwnd(_qwen.CurrentParent)}\nRecovery journal present: {File.Exists(_recovery.JournalPath)}";
+            if (window.Content is System.Windows.Controls.TextBox box && window.IsVisible) box.Text = BuildCachedDiagnostics(target) + "\n\n" + FormatProcess("Контроллёр", metrics.Controller) + "\n" + FormatProcess("Qwen", metrics.Qwen) + $"\nЗадержка Dispatcher: обновления UI поставлены в очередь (без синхронного Dispatcher.Invoke)\nПоследний вызов перехватчика клавиатуры: {_hotkeys?.LastHookDuration.TotalMilliseconds:F3} мс\nПринято сообщений журнала в минуту: {_log.AcceptedMessagesPerMinute:F1}\nОтброшено сообщений журнала: {_log.DroppedMessageCount}\nИсходный/текущий родитель: {FormatHwnd(_qwen.OriginalParent)}/{FormatHwnd(_qwen.CurrentParent)}\nЖурнал восстановления существует: {(File.Exists(_recovery.JournalPath) ? "Да" : "Нет")}";
         }
         catch (Exception ex) { _log.Error("Diagnostics collection failed: " + ex.GetType().Name); }
     }
 
     private string BuildCachedDiagnostics(QwenTarget? target) =>
-        $"Controller version: {GetType().Assembly.GetName().Version}\nController PID: {Environment.ProcessId}\nSafe mode: {_options.SafeMode}\nQwen attached: {_qwen.IsAttached}\nQwen PID: {target?.ProcessId}\nQwen HWND: {FormatHwnd(target?.Hwnd ?? IntPtr.Zero)}\nQwen class: {target?.WindowClass}\nQwen executable: {target?.ExecutablePath}\nAttach state: observational\nOpacity: {_qwen.Opacity:P0}\nTopMost: {_qwen.TopMost}\nClick-through: {_qwen.ClickThrough}\nPrivacy host: {_qwen.PrivacyStatus}\nWDA requested/verified: 0x{_qwen.RequestedAffinity:X}/0x{_qwen.VerifiedAffinity:X}\nHotkeys: {_hotkeys?.FailureSummary ?? "initializing"}\nRight Ctrl hook: {(_hotkeys?.HookReady == true ? "READY" : "FAILED")}\nAudio: {(_audio?.Running == true ? "running" : "disabled/idle")}\nAudio pump last/max: {_audio?.LastPumpDuration.TotalMilliseconds:F3}/{_audio?.MaxPumpDuration.TotalMilliseconds:F3} ms\nRecovery journal: {_recovery.JournalPath}\nLog: {_log.LogPath}\n\nCollecting process metrics asynchronously…";
+        $"Версия контроллёра: {GetType().Assembly.GetName().Version}\nPID контроллёра: {Environment.ProcessId}\nБезопасный режим: {(_options.SafeMode ? "Да" : "Нет")}\nQwen подключён: {(_qwen.IsAttached ? "Да" : "Нет")}\nPID Qwen: {target?.ProcessId}\nHWND Qwen: {FormatHwnd(target?.Hwnd ?? IntPtr.Zero)}\nКласс Qwen: {target?.WindowClass}\nИсполняемый файл Qwen: {target?.ExecutablePath}\nСостояние подключения: наблюдательное\nПрозрачность: {_qwen.Opacity:P0}\nПоверх всех окон: {UiText.Switch(_qwen.TopMost)}\nСквозные клики: {UiText.Switch(_qwen.ClickThrough)}\nЗащита демонстрации: {UiText.PrivacyStatus(_qwen.PrivacyStatus)}\nЗапрошено/подтверждено WDA: 0x{_qwen.RequestedAffinity:X}/0x{_qwen.VerifiedAffinity:X}\nГорячие клавиши: {_hotkeys?.FailureSummary ?? "Инициализация"}\nПерехватчик Right Ctrl: {(_hotkeys?.HookReady == true ? "Готово" : "Ошибка")}\nАварийная клавиша Ctrl+Alt+Esc: {UiText.EmergencyHotkeyStatus(_emergencyHotkey?.Status)}\nАудио: {(_audio?.Running == true ? "работает" : "отключено / ожидание")}\nПоследний/максимальный цикл аудио: {_audio?.LastPumpDuration.TotalMilliseconds:F3}/{_audio?.MaxPumpDuration.TotalMilliseconds:F3} мс\nЖурнал восстановления: {_recovery.JournalPath}\nЖурнал: {_log.LogPath}\n\nСбор метрик процессов асинхронно…";
 
-    private static string FormatProcess(string label, ProcessDiagnostics value) => $"{label}: PID={value.Pid}, CPU={value.CpuPercent:F2}%, Working set={value.WorkingSetBytes / 1024d / 1024d:F1} MiB, Threads={value.ThreadCount}, Handles={value.HandleCount}, GDI={value.GdiObjectCount}, USER={value.UserObjectCount}, State={value.State}";
-    private static string FormatHwnd(IntPtr hwnd) => hwnd == IntPtr.Zero ? "n/a" : $"0x{hwnd.ToInt64():X}";
+    private static string FormatProcess(string label, ProcessDiagnostics value) => $"{label}: PID={value.Pid}, CPU={value.CpuPercent:F2}%, Рабочий набор={value.WorkingSetBytes / 1024d / 1024d:F1} MiB, Потоки={value.ThreadCount}, Дескрипторы={value.HandleCount}, GDI={value.GdiObjectCount}, USER={value.UserObjectCount}, Состояние={UiText.ProcessState(value.State)}";
+    private static string FormatHwnd(IntPtr hwnd) => hwnd == IntPtr.Zero ? "нет" : $"0x{hwnd.ToInt64():X}";
 
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
-    private void ShowQwen() { if (!_qwen.ShowAndActivate()) { _sessionMonitor.CheckNow(); Toast("Qwen is not attached"); } }
+    private void ShowQwen() { if (!_qwen.ShowAndActivate()) { _sessionMonitor.CheckNow(); Toast("Qwen не подключён"); } }
     private void Attach_Click(object sender, RoutedEventArgs e)
     {
         _ = Task.Run(() =>
@@ -279,7 +279,7 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(path) && _settings.Current.AutoLaunchQwen) _locator.TryLaunch(path);
             _sessionMonitor.CheckNow();
         });
-        Toast("Looking for the installed Qwen Desktop…");
+        Toast("Поиск установленного Qwen Desktop…");
     }
     private void ShowQwen_Click(object sender, RoutedEventArgs e) => ShowQwen();
     private void Click_Click(object sender, RoutedEventArgs e) { if (RequireMutation()) ToggleClickThrough(); }
