@@ -5,7 +5,6 @@ namespace QwenWorkOverlay;
 public sealed class QwenVoiceAutomation
 {
     private const int MinimumInvokeScore = 20;
-    private readonly AppLogger _log;
     private readonly QwenVoiceClickFallback _clickFallback;
 
     public string State { get; private set; } = "Not scanned";
@@ -15,7 +14,6 @@ public sealed class QwenVoiceAutomation
 
     public QwenVoiceAutomation(AppLogger log)
     {
-        _log = log;
         _clickFallback = new QwenVoiceClickFallback(log);
     }
 
@@ -37,47 +35,10 @@ public sealed class QwenVoiceAutomation
             return false;
         }
 
-        if (!TryFindCandidate(qwenHwnd, out var candidate, out var diagnostic))
-        {
-            State = diagnostic + "; calibrated click fallback not configured";
-            return false;
-        }
-
-        LastMatchedButton = candidate.Label;
-        LastMatchedScore = candidate.Score;
-        if (candidate.Score < MinimumInvokeScore)
-        {
-            State = $"Voice candidate confidence too low ({candidate.Score}); manual Qwen voice use required";
-            _log.Info(State + ": " + candidate.Label);
-            return false;
-        }
-
-        if (candidate.Ambiguous)
-        {
-            State = "Voice automation refused an ambiguous accessibility match; manual Qwen voice use required";
-            _log.Info(State + ": " + candidate.Label);
-            return false;
-        }
-
-        try
-        {
-            if (candidate.Element.TryGetCurrentPattern(InvokePattern.Pattern, out var invokeObject) && invokeObject is InvokePattern invoke)
-            {
-                invoke.Invoke();
-                State = $"Voice button invoked through UI Automation (confidence {candidate.Score})";
-                _log.Info("Qwen voice automation invoked: " + candidate.Label);
-                return true;
-            }
-
-            State = "Voice-like button found but it exposes no InvokePattern";
-            return false;
-        }
-        catch (Exception ex)
-        {
-            State = "Voice automation invocation failed: " + ex.GetType().Name;
-            _log.Error(State);
-            return false;
-        }
+        // The known Qwen build exposes an empty composer tree. Never launch a potentially
+        // expensive cross-process UIA traversal from a hotkey; calibration is the safe path.
+        State = "Voice calibration is required; UI Automation discovery is disabled during hotkey use";
+        return false;
     }
 
     public void Probe(IntPtr qwenHwnd)

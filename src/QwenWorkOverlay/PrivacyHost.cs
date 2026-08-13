@@ -92,6 +92,8 @@ internal sealed class PrivacyHostSession : IDisposable
 
     public bool TryEnable(QwenTarget target)
     {
+        if (!PrivacyHostPolicy.CrossProcessHostingSupportedOnTargetMachine)
+            return MarkUnsupportedOnTargetMachine("cross-process SetParent did not preserve Qwen child resize behavior during staged validation");
         if (State == CapturePrivacyState.Enabled && _target?.Hwnd == target.Hwnd) return true;
         if (State == CapturePrivacyState.Enabled) return false;
         State = CapturePrivacyState.Hosting;
@@ -174,6 +176,17 @@ internal sealed class PrivacyHostSession : IDisposable
         {
             return Fail("Privacy host exception: " + ex.GetType().Name);
         }
+    }
+
+    public bool MarkUnsupportedOnTargetMachine(string reason)
+    {
+        // The target-machine staged test showed that a foreign Chromium Qwen child does not
+        // reliably follow host resizing after SetParent. Do not leave this architecture callable
+        // merely because the host can be created and WDA can be read back.
+        State = CapturePrivacyState.UnsupportedForExternalWindow;
+        Status = "UNSUPPORTED ON TARGET MACHINE: " + reason;
+        _log.Error("Privacy host disabled: " + reason);
+        return false;
     }
 
     public CapturePathProbeResult ValidateGdiScreenCopy()

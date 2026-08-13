@@ -90,6 +90,10 @@ public enum PrivacyHostTransition
 
 public static class PrivacyHostPolicy
 {
+    // Target-machine staged validation proved that the Qwen Chromium window does not resize
+    // reliably after cross-process SetParent. Keep the implementation hard-disabled until a
+    // different, supported native architecture exists.
+    public static readonly bool CrossProcessHostingSupportedOnTargetMachine = false;
     public static long ToChildStyle(long currentStyle) => (currentStyle | Native.WS_CHILD) & ~Native.WS_POPUP;
     public static bool IsDpiCompatible(uint hostDpi, uint qwenDpi) => hostDpi != 0 && hostDpi == qwenDpi;
     public static bool IsVerifiedAffinity(uint requested, uint verified) =>
@@ -191,4 +195,13 @@ public static class WindowStylePolicy
         else if ((originalStyle & Native.WS_EX_TRANSPARENT) == 0) desired &= ~Native.WS_EX_TRANSPARENT;
         return desired;
     }
+}
+
+public static class LegacyRecoveryPolicy
+{
+    // Pre-v2 journals cannot prove parent/base-style/placement state. After applying the saved
+    // values, accept only a state with no controller-introduced extended-style flags remaining.
+    // This avoids retrying forever when a Chromium/DWM window manager normalizes unrelated bits.
+    public static bool IsSafe(long currentExStyle, bool visibleMatches) =>
+        visibleMatches && (currentExStyle & (Native.WS_EX_LAYERED | Native.WS_EX_TRANSPARENT | Native.WS_EX_TOPMOST)) == 0;
 }

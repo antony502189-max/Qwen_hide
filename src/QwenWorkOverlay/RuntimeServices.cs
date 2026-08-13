@@ -2,14 +2,18 @@ using System.Diagnostics;
 
 namespace QwenWorkOverlay;
 
-public sealed record ControllerRuntimeOptions(bool SafeMode, int? ExitAfterSeconds)
+public sealed record ControllerRuntimeOptions(bool SafeMode, int? ExitAfterSeconds, bool OpacityEnabled, bool ExperimentalPrivacyHostEnabled)
 {
     public static ControllerRuntimeOptions FromArguments(IEnumerable<string> arguments)
     {
         var values = arguments.ToArray();
         var index = Array.FindIndex(values, x => string.Equals(x, "--exit-after-seconds", StringComparison.OrdinalIgnoreCase));
         int? exitAfter = index >= 0 && index + 1 < values.Length && int.TryParse(values[index + 1], out var seconds) && seconds > 0 ? seconds : null;
-        return new(values.Any(x => string.Equals(x, "--safe-mode", StringComparison.OrdinalIgnoreCase)), exitAfter);
+        return new(
+            values.Any(x => string.Equals(x, "--safe-mode", StringComparison.OrdinalIgnoreCase)),
+            exitAfter,
+            values.Any(x => string.Equals(x, "--enable-opacity", StringComparison.OrdinalIgnoreCase)),
+            values.Any(x => string.Equals(x, "--enable-experimental-privacy-host", StringComparison.OrdinalIgnoreCase)));
     }
 }
 
@@ -97,13 +101,25 @@ public sealed class DiagnosticsService
 
 public sealed class EmergencyRecoveryService
 {
-    private readonly WindowRecoveryService _recovery;
+    private readonly Func<bool> _recover;
+    private readonly Action _freezeMutations;
+    private readonly Action _terminate;
     private readonly AppLogger _log;
     private int _requested;
 
-    public EmergencyRecoveryService(WindowRecoveryService recovery, AppLogger log)
+    public EmergencyRecoveryService(WindowRecoveryService recovery, AppLogger log, Action? freezeMutations = null, Action? terminate = null)
     {
-        _recovery = recovery;
+        _recover = recovery.TryRecoverStaleState;
+        _freezeMutations = freezeMutations ?? (() => { });
+        _terminate = terminate ?? (() => Environment.Exit(0));
+        _log = log;
+    }
+
+    internal EmergencyRecoveryService(Func<bool> recover, AppLogger log, Action freezeMutations, Action terminate)
+    {
+        _recover = recover;
+        _freezeMutations = freezeMutations;
+        _terminate = terminate;
         _log = log;
     }
 
@@ -112,9 +128,10 @@ public sealed class EmergencyRecoveryService
         if (Interlocked.Exchange(ref _requested, 1) != 0) return;
         ThreadPool.UnsafeQueueUserWorkItem(_ =>
         {
-            try { _recovery.TryRecoverStaleState(); } catch { }
+            try { _freezeMutations(); } catch { }
+            try { _recover(); } catch { }
             _log.Info("Emergency recovery requested; journal restoration completed before process exit");
-            Environment.Exit(0);
+            _terminate();
         }, null);
     }
 }

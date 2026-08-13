@@ -60,7 +60,12 @@ public sealed class RealQwenPrivacyIntegrationTests
         try
         {
             Assert.True(controller.Attach(qwen, 1.0, false));
-            Assert.True(controller.EnablePrivacyHost());
+            if (!controller.EnablePrivacyHost())
+            {
+                Assert.Equal(CapturePrivacyState.UnsupportedForExternalWindow, controller.PrivacyState);
+                Assert.Contains("UNSUPPORTED ON TARGET MACHINE", controller.PrivacyStatus);
+                return;
+            }
             Assert.Equal(CapturePrivacyState.Enabled, controller.PrivacyState);
             Assert.NotEqual(IntPtr.Zero, controller.PrivacyHostHwnd);
             Assert.Equal(controller.PrivacyHostHwnd, controller.CurrentParent);

@@ -43,8 +43,12 @@ public sealed class QwenProcessLocator
                 foreach (var hwnd in Native.EnumerateTopLevelWindows((uint)process.Id))
                 {
                     if (!Native.IsWindow(hwnd) || !Native.IsWindowVisible(hwnd)) continue;
+                    var minimized = Native.IsIconic(hwnd);
                     if (!Native.GetWindowRect(hwnd, out var rect)) continue;
-                    if (rect.Right - rect.Left < 320 || rect.Bottom - rect.Top < 200) continue;
+                    // A minimized native Qwen can report a sentinel/zero-size rectangle. It is
+                    // still a valid observational attach target; only coordinate-driven features
+                    // such as voice clicks must reject minimized geometry.
+                    if (!minimized && (rect.Right - rect.Left < 320 || rect.Bottom - rect.Top < 200)) continue;
                     var title = Native.GetWindowText(hwnd);
                     var windowClass = Native.GetWindowClass(hwnd);
                     candidates.Add(new QwenTarget(process.Id, hwnd, processName, executable, title, windowClass, startTicks));
@@ -193,10 +197,12 @@ public sealed class QwenWindowController : IDisposable
     private byte _originalAlpha = 255;
     private uint _originalLayerFlags;
     private uint _originalColorKey;
+    private bool _mutationStarted;
     private bool _clickThrough;
     private double _opacity = 1;
     private bool _topMost;
     private bool _hidden;
+    private int _mutationsFrozen;
 
     public QwenWindowController(AppLogger log, WindowRecoveryService? recovery = null)
     {
@@ -208,7 +214,7 @@ public sealed class QwenWindowController : IDisposable
     public QwenTarget? Target => _target;
     // A host-close recovery can restore Qwen synchronously, but the controller's cached snapshot
     // is no longer a valid mutation lease. Force the normal reacquire/re-journal path first.
-    public bool IsAttached => _target is not null && PrivacyMutationPolicy.CanMutateNativeWindow(Native.IsWindow(_target.Hwnd), _privacy.State);
+    public bool IsAttached => Volatile.Read(ref _mutationsFrozen) == 0 && _target is not null && PrivacyMutationPolicy.CanMutateNativeWindow(Native.IsWindow(_target.Hwnd), _privacy.State);
     public bool ClickThrough => _clickThrough;
     public double Opacity => _opacity;
     public bool TopMost => _topMost;
@@ -231,6 +237,7 @@ public sealed class QwenWindowController : IDisposable
     public NativeCaptureProbeResult WindowsGraphicsCaptureProbe => _privacy.WindowsGraphicsCaptureProbe;
 
     public bool RecoverStaleState() => _recovery.TryRecoverStaleState();
+    public void FreezeMutations() => Interlocked.Exchange(ref _mutationsFrozen, 1);
 
     // Attachment is observational. It must not create a journal or send any style/position call.
     // The compatibility overload intentionally ignores stored visual settings.
@@ -238,6 +245,7 @@ public sealed class QwenWindowController : IDisposable
 
     public bool Attach(QwenTarget target)
     {
+        if (Volatile.Read(ref _mutationsFrozen) != 0) return false;
         if (IsAttached && _target!.Hwnd == target.Hwnd) return true;
         Detach(restore: true);
         if (!Native.IsWindow(target.Hwnd)) return false;
@@ -252,26 +260,37 @@ public sealed class QwenWindowController : IDisposable
         _originalLayerFlags = Native.LWA_ALPHA;
         _originalColorKey = 0;
 
-        // If Qwen already uses layered-window attributes of its own, we must be able to read them before
-        // changing alpha. Otherwise an exact rollback cannot be guaranteed, so refuse attachment safely.
-        if (_originalLayered && !Native.GetLayeredWindowAttributes(target.Hwnd, out _originalColorKey, out _originalAlpha, out _originalLayerFlags))
-        {
-            _log.Error("Native Qwen is already layered but its original layered attributes are unreadable; refusing unsafe style mutation");
-            _target = null;
-            return false;
-        }
-
         _hidden = !_originalVisible;
+        _mutationStarted = false;
         _log.Info("Observationally attached to native Qwen desktop: " + target.Summary);
         return true;
     }
 
     private bool BeginMutation()
     {
-        if (_target is null) return false;
+        if (Volatile.Read(ref _mutationsFrozen) != 0 || _target is null) return false;
+        if (!_mutationStarted)
+        {
+            // Observational attachment never freezes a rollback baseline. Take the exact native
+            // state immediately before the first controller mutation, after any user changes.
+            _originalExStyle = Native.GetWindowLongPtr(_target.Hwnd, Native.GWL_EXSTYLE);
+            _originalTopMost = (_originalExStyle.ToInt64() & Native.WS_EX_TOPMOST) != 0;
+            _originalVisible = Native.IsWindowVisible(_target.Hwnd);
+            _originalLayered = (_originalExStyle.ToInt64() & Native.WS_EX_LAYERED) != 0;
+            _originalAlpha = 255;
+            _originalLayerFlags = Native.LWA_ALPHA;
+            _originalColorKey = 0;
+            if (_originalLayered && !Native.GetLayeredWindowAttributes(_target.Hwnd, out _originalColorKey, out _originalAlpha, out _originalLayerFlags))
+            {
+                _log.Error("Native Qwen layered attributes are unreadable; refusing unsafe style mutation");
+                return false;
+            }
+        }
         return _recovery.Save(_target, _originalExStyle, _originalTopMost, _originalVisible,
-            _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey);
+            _originalLayered, _originalAlpha, _originalLayerFlags, _originalColorKey) && MarkMutationStarted();
     }
+
+    private bool MarkMutationStarted() { _mutationStarted = true; return true; }
 
     public bool SetOpacity(double value)
     {
@@ -356,7 +375,7 @@ public sealed class QwenWindowController : IDisposable
 
     public bool ShowAndActivate()
     {
-        if (!IsAttached) return false;
+        if (!IsAttached || Volatile.Read(ref _mutationsFrozen) != 0) return false;
         if (_privacy.State == CapturePrivacyState.Enabled)
         {
             _log.Error("Refusing direct Qwen activation while Qwen is hosted for capture privacy");
@@ -422,13 +441,8 @@ public sealed class QwenWindowController : IDisposable
 
     public bool EnablePrivacyHost()
     {
-        if (!IsAttached || _target is null) return false;
-        if (!BeginMutation()) return false;
-        if (_privacy.TryEnable(_target)) return true;
-        // The privacy session has already restored its recovery snapshot. Detach this controller's
-        // cached target so no subsequent mutation can operate on an unjournaled window.
-        Detach(restore: true);
-        return false;
+        return _privacy.MarkUnsupportedOnTargetMachine(
+            "cross-process SetParent did not preserve Qwen child resize behavior during staged validation");
     }
 
     public bool DisablePrivacyHost()
@@ -474,6 +488,7 @@ public sealed class QwenWindowController : IDisposable
             _hidden = false;
             _opacity = 1;
             _topMost = false;
+            _mutationStarted = false;
             if (target is not null) _log.Info("Detached from native Qwen desktop");
         }
     }

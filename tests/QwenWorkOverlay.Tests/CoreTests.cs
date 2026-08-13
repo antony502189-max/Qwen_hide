@@ -192,6 +192,41 @@ public class CoreTests
     }
 
     [Fact]
+    public void Legacy_recovery_journal_without_schema_is_not_misread_as_v2()
+    {
+        const string legacyJson = "{\"ProcessId\":123,\"Hwnd\":456,\"OriginalExStyle\":256}";
+        var snapshot = System.Text.Json.JsonSerializer.Deserialize<WindowRecoverySnapshot>(legacyJson)!;
+        Assert.Equal(0, snapshot.RecoverySchemaVersion);
+    }
+
+    [Fact]
+    public void Legacy_recovery_accepts_only_a_state_without_controller_style_bits()
+    {
+        Assert.True(LegacyRecoveryPolicy.IsSafe(0, true));
+        Assert.False(LegacyRecoveryPolicy.IsSafe(Native.WS_EX_LAYERED, true));
+        Assert.False(LegacyRecoveryPolicy.IsSafe(Native.WS_EX_TRANSPARENT, true));
+        Assert.False(LegacyRecoveryPolicy.IsSafe(Native.WS_EX_TOPMOST, true));
+        Assert.False(LegacyRecoveryPolicy.IsSafe(0, false));
+    }
+
+    [Fact]
+    public void Minimized_windows_are_explicitly_rejected_only_for_coordinate_actions()
+    {
+        var minimized = new Native.RECT { Left = -32000, Top = -32000, Right = -32000, Bottom = -32000 };
+        Assert.True(Native.IsMinimizedCoordinate(minimized));
+    }
+
+    [Fact]
+    public void Privacy_host_can_be_marked_unsupported_without_mutating_qwen()
+    {
+        using var logger = new AppLogger();
+        using var controller = new QwenWindowController(logger);
+        Assert.False(controller.EnablePrivacyHost());
+        Assert.Equal(CapturePrivacyState.UnsupportedForExternalWindow, controller.PrivacyState);
+        Assert.Contains("UNSUPPORTED ON TARGET MACHINE", controller.PrivacyStatus);
+    }
+
+    [Fact]
     public void Legacy_settings_are_migrated_to_safe_non_mutating_defaults()
     {
         var root = Path.Combine(Path.GetTempPath(), "QdcSettingsMigration", Guid.NewGuid().ToString("N"));
@@ -212,6 +247,28 @@ public class CoreTests
         Assert.True(ControllerRuntimeOptions.FromArguments(["--safe-mode"]).SafeMode);
         Assert.False(ControllerRuntimeOptions.FromArguments(Array.Empty<string>()).SafeMode);
         Assert.Equal(12, ControllerRuntimeOptions.FromArguments(["--safe-mode", "--exit-after-seconds", "12"]).ExitAfterSeconds);
+        Assert.True(ControllerRuntimeOptions.FromArguments(["--enable-opacity", "--enable-experimental-privacy-host"]).OpacityEnabled);
+        Assert.True(ControllerRuntimeOptions.FromArguments(["--enable-opacity", "--enable-experimental-privacy-host"]).ExperimentalPrivacyHostEnabled);
+    }
+
+    [Fact]
+    public void Emergency_recovery_freezes_restores_and_terminates_once()
+    {
+        using var logger = new AppLogger();
+        var frozen = 0;
+        var restored = 0;
+        var terminated = 0;
+        var service = new EmergencyRecoveryService(
+            () => { Interlocked.Increment(ref restored); return true; }, logger,
+            () => Interlocked.Increment(ref frozen),
+            () => Interlocked.Increment(ref terminated));
+
+        service.RequestExit();
+        service.RequestExit();
+        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref terminated) == 1, TimeSpan.FromSeconds(2)));
+        Assert.Equal(1, Volatile.Read(ref frozen));
+        Assert.Equal(1, Volatile.Read(ref restored));
+        Assert.Equal(1, Volatile.Read(ref terminated));
     }
 
     [Fact]

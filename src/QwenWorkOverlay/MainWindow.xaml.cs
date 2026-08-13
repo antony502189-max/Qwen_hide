@@ -42,7 +42,7 @@ public partial class MainWindow : Window
         _voice = new QwenVoiceAutomation(log);
         _foregroundTracker = new ForegroundWindowTracker(() => _qwen.Target?.Hwnd);
         _sessionMonitor = new QwenSessionMonitor(() => _qwen.Target, _locator.FindRunningTarget, OnDiscoveryResult);
-        _emergency = new EmergencyRecoveryService(_recovery, log);
+        _emergency = new EmergencyRecoveryService(_recovery, log, FreezeForEmergencyExit);
         Loaded += OnLoaded;
         Closing += OnClosing;
     }
@@ -186,6 +186,11 @@ public partial class MainWindow : Window
     private void SetOpacity(double value)
     {
         value = Math.Clamp(value, .35, 1);
+        if (value < .999 && !_options.OpacityEnabled)
+        {
+            Toast("Opacity is disabled until this Qwen build passes a target-machine compositor test (--enable-opacity)");
+            return;
+        }
         if (_qwen.SetOpacity(value)) { _settings.Current.Opacity = value; _settings.Save(); Toast($"Qwen opacity {value:P0}"); }
         else Toast("Opacity change failed or unsupported by Qwen compositor");
     }
@@ -240,7 +245,8 @@ public partial class MainWindow : Window
         window.Show();
         try
         {
-            var metrics = await _diagnostics.CollectAsync(target, new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var metrics = await _diagnostics.CollectAsync(target, timeout.Token);
             if (window.Content is System.Windows.Controls.TextBox box && window.IsVisible) box.Text = BuildCachedDiagnostics(target) + "\n\n" + FormatProcess("Controller", metrics.Controller) + "\n" + FormatProcess("Qwen", metrics.Qwen) + $"\nDispatcher latency: UI updates are queued (no synchronous Dispatcher.Invoke)\nLast keyboard-hook callback: {_hotkeys?.LastHookDuration.TotalMilliseconds:F3} ms\nAsync log messages dropped: {_log.DroppedMessageCount}";
         }
         catch (Exception ex) { _log.Error("Diagnostics collection failed: " + ex.GetType().Name); }
@@ -268,6 +274,11 @@ public partial class MainWindow : Window
     private void Click_Click(object sender, RoutedEventArgs e) { if (RequireMutation()) ToggleClickThrough(); }
     private void Privacy_Click(object sender, RoutedEventArgs e)
     {
+        if (!_options.ExperimentalPrivacyHostEnabled)
+        {
+            Toast("Privacy host is disabled pending staged target-machine validation (--enable-experimental-privacy-host)");
+            return;
+        }
         if (!RequireMutation()) return;
         var enabled = _qwen.PrivacyState == CapturePrivacyState.Enabled;
         var ok = enabled ? _qwen.DisablePrivacyHost() : _qwen.EnablePrivacyHost();
@@ -296,6 +307,15 @@ public partial class MainWindow : Window
     private void Exit_Click(object sender, RoutedEventArgs e) => _emergency.RequestExit();
 
     public void EmergencyRestoreForCrash() => _emergency.RequestExit();
+
+    private void FreezeForEmergencyExit()
+    {
+        _qwen.FreezeMutations();
+        lock (_audioGate)
+        {
+            try { _audio?.Stop(); } catch { }
+        }
+    }
 
     private void DisposeRuntimeResources(bool saveControllerPosition)
     {

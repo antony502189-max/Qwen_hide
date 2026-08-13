@@ -6,7 +6,9 @@ namespace QwenWorkOverlay;
 
 public sealed class WindowRecoverySnapshot
 {
-    public int RecoverySchemaVersion { get; set; } = 2;
+    // Missing from pre-v2 JSON must remain distinguishable from a v2 snapshot. A default of 2
+    // would misinterpret legacy journals as containing zero-valued placement/parent metadata.
+    public int RecoverySchemaVersion { get; set; }
     public int ProcessId { get; set; }
     public long ProcessStartUtcTicks { get; set; }
     public long Hwnd { get; set; }
@@ -72,6 +74,7 @@ public sealed class WindowRecoveryService
             var dpiAwarenessContext = Native.GetWindowDpiAwarenessContext(target.Hwnd).ToInt64();
             var snapshot = new WindowRecoverySnapshot
             {
+                RecoverySchemaVersion = 2,
                 ProcessId = target.ProcessId,
                 ProcessStartUtcTicks = target.ProcessStartUtcTicks,
                 Hwnd = target.Hwnd.ToInt64(),
@@ -172,7 +175,9 @@ public sealed class WindowRecoveryService
             }
 
             var currentStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
-            var styleMatches = currentStyle == snapshot.OriginalExStyle;
+            var styleMatches = snapshot.RecoverySchemaVersion < 2
+                ? LegacyRecoveryPolicy.IsSafe(currentStyle, Native.IsWindowVisible(hwnd) == snapshot.OriginalVisible)
+                : currentStyle == snapshot.OriginalExStyle;
             var parentMatches = snapshot.RecoverySchemaVersion < 2 || Native.GetParent(hwnd).ToInt64() == snapshot.OriginalParent;
             // GWL_STYLE is only controller-mutated by the cross-process privacy host. Other
             // native mutations intentionally leave it alone, and window managers may normalize
@@ -317,7 +322,10 @@ public sealed class WindowRecoveryService
             // SetWindowPos topmost transitions can rewrite WS_EX_TOPMOST. Restore the exact
             // recorded extended-style word after the Z-order/placement calls, then verify it.
             Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(snapshot.OriginalExStyle));
-            styleOk = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64() == snapshot.OriginalExStyle;
+            var restoredExStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
+            styleOk = snapshot.RecoverySchemaVersion < 2
+                ? LegacyRecoveryPolicy.IsSafe(restoredExStyle, Native.IsWindowVisible(hwnd) == snapshot.OriginalVisible)
+                : restoredExStyle == snapshot.OriginalExStyle;
 
             // GetParent's interpretation depends on WS_CHILD. Check only after both style words have
             // been restored; checking immediately after SetParent(..., NULL) falsely reports desktop
