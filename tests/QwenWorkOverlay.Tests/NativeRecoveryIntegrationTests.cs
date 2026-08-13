@@ -72,6 +72,8 @@ public sealed class NativeRecoveryIntegrationTests
                 "WindowsForms10.Window",
                 process.StartTime.ToUniversalTime().Ticks);
 
+            NativeTest.ShowWindow(hwnd, NativeTest.SW_SHOWMAXIMIZED);
+            Assert.True(SpinWait.SpinUntil(() => NativeTest.IsZoomed(hwnd), TimeSpan.FromSeconds(3)), "Test HWND did not maximize.");
             recovery.Save(target, new IntPtr(original), false, true, false, 255, NativeTest.LWA_ALPHA, 0);
             Assert.True(File.Exists(journal));
 
@@ -88,6 +90,7 @@ public sealed class NativeRecoveryIntegrationTests
             Assert.True(recovery.TryRecoverStaleState());
             Assert.Equal(original, NativeTest.GetWindowLongPtr(hwnd, NativeTest.GWL_EXSTYLE).ToInt64());
             Assert.True(NativeTest.IsWindowVisible(hwnd));
+            Assert.True(NativeTest.IsZoomed(hwnd));
             Assert.False(File.Exists(journal));
         }
         finally
@@ -110,6 +113,7 @@ public sealed class NativeRecoveryIntegrationTests
         public const uint SWP_NOACTIVATE = 0x0010;
         public const uint SWP_FRAMECHANGED = 0x0020;
         public const int SW_HIDE = 0;
+        public const int SW_SHOWMAXIMIZED = 3;
         public static readonly IntPtr HWND_TOPMOST = new(-1);
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLong", SetLastError = true)]
@@ -145,5 +149,9 @@ public sealed class NativeRecoveryIntegrationTests
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool IsWindowVisible(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsZoomed(IntPtr hwnd);
     }
 }

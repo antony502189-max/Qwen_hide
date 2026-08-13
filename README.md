@@ -32,6 +32,8 @@ The controller never applies `SetWindowDisplayAffinity` directly to Qwen's forei
 
 Entering this mode requires a verified on-disk recovery record of Qwen's original parent, styles, placement, visibility, topmost state and DPI. A failed affinity/DPI/parenting check rolls back and does not report privacy as enabled. Diagnostics distinguishes verified host affinity from actual capture-pipeline compatibility: Teams, Zoom, Google Meet and Yandex Telemost full-monitor sharing still require the manual checks below.
 
+Current target-machine matrix: host `WDA_EXCLUDEFROMCAPTURE` is read back as `0x11`; legacy GDI screen copy is **Exposed** and therefore unsupported. This says nothing about Desktop Duplication, Windows Graphics Capture, or conferencing applications.
+
 ## Quick start
 
 ```powershell

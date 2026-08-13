@@ -45,6 +45,7 @@ public class CoreTests
             PlacementRight = 900,
             PlacementBottom = 700,
             OriginalDpi = 144,
+            OriginalDpiAwarenessContext = -4,
             PrivacyHostActive = true,
             PrivacyHostHwnd = 0x33,
             PrivacyHostDpi = 144
@@ -60,6 +61,7 @@ public class CoreTests
         Assert.Equal(snapshot.OriginalStyle, restored.OriginalStyle);
         Assert.Equal(snapshot.PlacementBottom, restored.PlacementBottom);
         Assert.Equal(snapshot.PrivacyHostHwnd, restored.PrivacyHostHwnd);
+        Assert.Equal(snapshot.OriginalDpiAwarenessContext, restored.OriginalDpiAwarenessContext);
     }
 
     [Fact]
@@ -207,6 +209,25 @@ public class CoreTests
         Assert.NotEqual(0, child & Native.WS_CHILD);
         Assert.Equal(0, child & Native.WS_POPUP);
         Assert.Equal(0x00CF0000L, child & 0x00CF0000L);
+    }
+
+    [Theory]
+    [InlineData(2, 30, 30, CaptureProbeVerdict.LikelyExcluded)]
+    [InlineData(35, 30, 30, CaptureProbeVerdict.Exposed)]
+    [InlineData(8, 30, 30, CaptureProbeVerdict.Inconclusive)]
+    [InlineData(2, 1, 1, CaptureProbeVerdict.Inconclusive)]
+    public void Gdi_capture_probe_policy_never_turns_weak_evidence_into_a_privacy_pass(
+        double difference, double visibleVariance, double hiddenVariance, CaptureProbeVerdict expected)
+    {
+        Assert.Equal(expected, CaptureProbePolicy.ClassifyGdi(difference, visibleVariance, hiddenVariance));
+    }
+
+    [Fact]
+    public void Failed_privacy_host_requires_reacquisition_before_any_native_mutation()
+    {
+        Assert.False(PrivacyMutationPolicy.CanMutateNativeWindow(true, CapturePrivacyState.Failed));
+        Assert.True(PrivacyMutationPolicy.CanMutateNativeWindow(true, CapturePrivacyState.Off));
+        Assert.False(PrivacyMutationPolicy.CanMutateNativeWindow(false, CapturePrivacyState.Off));
     }
 
     [Fact]

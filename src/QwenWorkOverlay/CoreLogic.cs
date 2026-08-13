@@ -94,6 +94,38 @@ public static class PrivacyHostPolicy
     public static bool IsDpiCompatible(uint hostDpi, uint qwenDpi) => hostDpi != 0 && hostDpi == qwenDpi;
     public static bool IsVerifiedAffinity(uint requested, uint verified) =>
         requested == Native.WDA_EXCLUDEFROMCAPTURE && verified == requested;
+    public static bool IsDpiAwarenessCompatible(IntPtr hostContext, IntPtr qwenContext) =>
+        hostContext != IntPtr.Zero && qwenContext != IntPtr.Zero && Native.AreDpiAwarenessContextsEqual(hostContext, qwenContext);
+}
+
+public enum CaptureProbeVerdict
+{
+    NotRun,
+    LikelyExcluded,
+    Exposed,
+    Inconclusive,
+    Failed
+}
+
+public static class CaptureProbePolicy
+{
+    // A plain screen copy is only one capture pipeline. The thresholds deliberately leave a broad
+    // inconclusive range so transient Qwen animation or a uniform desktop cannot become a privacy claim.
+    public static CaptureProbeVerdict ClassifyGdi(double meanRgbDifference, double visibleVariance, double hiddenVariance)
+    {
+        if (!double.IsFinite(meanRgbDifference) || !double.IsFinite(visibleVariance) || !double.IsFinite(hiddenVariance))
+            return CaptureProbeVerdict.Failed;
+        if (visibleVariance < 6 && hiddenVariance < 6) return CaptureProbeVerdict.Inconclusive;
+        if (meanRgbDifference <= 4) return CaptureProbeVerdict.LikelyExcluded;
+        if (meanRgbDifference >= 18) return CaptureProbeVerdict.Exposed;
+        return CaptureProbeVerdict.Inconclusive;
+    }
+}
+
+public static class PrivacyMutationPolicy
+{
+    public static bool CanMutateNativeWindow(bool nativeHwndExists, CapturePrivacyState privacyState) =>
+        nativeHwndExists && privacyState != CapturePrivacyState.Failed;
 }
 
 public static class WindowStylePolicy

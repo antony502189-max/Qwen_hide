@@ -34,6 +34,7 @@ public sealed class WindowRecoverySnapshot
     public bool OriginalMinimized { get; set; }
     public bool OriginalMaximized { get; set; }
     public uint OriginalDpi { get; set; }
+    public long OriginalDpiAwarenessContext { get; set; }
     public bool PrivacyHostActive { get; set; }
     public long PrivacyHostHwnd { get; set; }
     public uint PrivacyHostDpi { get; set; }
@@ -68,6 +69,7 @@ public sealed class WindowRecoveryService
             var originalStyle = Native.GetWindowLongPtr(target.Hwnd, Native.GWL_STYLE).ToInt64();
             var originalParent = Native.GetParent(target.Hwnd).ToInt64();
             var dpi = Native.GetDpiForWindow(target.Hwnd);
+            var dpiAwarenessContext = Native.GetWindowDpiAwarenessContext(target.Hwnd).ToInt64();
             var snapshot = new WindowRecoverySnapshot
             {
                 ProcessId = target.ProcessId,
@@ -94,7 +96,8 @@ public sealed class WindowRecoveryService
                 PlacementBottom = placement.RcNormalPosition.Bottom,
                 OriginalMinimized = Native.IsIconic(target.Hwnd),
                 OriginalMaximized = Native.IsZoomed(target.Hwnd),
-                OriginalDpi = dpi
+                OriginalDpi = dpi,
+                OriginalDpiAwarenessContext = dpiAwarenessContext
             };
             var directory = Path.GetDirectoryName(_path);
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
@@ -123,7 +126,11 @@ public sealed class WindowRecoveryService
                      verify.PlacementLeft == snapshot.PlacementLeft &&
                      verify.PlacementTop == snapshot.PlacementTop &&
                      verify.PlacementRight == snapshot.PlacementRight &&
-                     verify.PlacementBottom == snapshot.PlacementBottom;
+                     verify.PlacementBottom == snapshot.PlacementBottom &&
+                     verify.OriginalMinimized == snapshot.OriginalMinimized &&
+                     verify.OriginalMaximized == snapshot.OriginalMaximized &&
+                     verify.OriginalDpi == snapshot.OriginalDpi &&
+                     verify.OriginalDpiAwarenessContext == snapshot.OriginalDpiAwarenessContext;
             if (!ok)
             {
                 _log.Error("Qwen recovery journal verification failed; refusing unsafe native window mutation");
@@ -170,14 +177,17 @@ public sealed class WindowRecoveryService
             var baseStyleMatches = snapshot.RecoverySchemaVersion < 2 || Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE).ToInt64() == snapshot.OriginalStyle;
             var topMostMatches = ((currentStyle & Native.WS_EX_TOPMOST) != 0) == snapshot.OriginalTopMost;
             var visibleMatches = Native.IsWindowVisible(hwnd) == snapshot.OriginalVisible;
+            var minimizedMatches = snapshot.RecoverySchemaVersion < 2 || Native.IsIconic(hwnd) == snapshot.OriginalMinimized;
+            var maximizedMatches = snapshot.RecoverySchemaVersion < 2 || Native.IsZoomed(hwnd) == snapshot.OriginalMaximized;
+            var placementMatches = snapshot.RecoverySchemaVersion < 2 || MatchesOriginalPlacement(hwnd, snapshot);
             var layeredMatches = true;
             if (snapshot.OriginalLayered && Native.GetLayeredWindowAttributes(hwnd, out var key, out var alpha, out var flags))
                 layeredMatches = key == snapshot.OriginalColorKey && alpha == snapshot.OriginalAlpha && flags == snapshot.OriginalLayerFlags;
 
-            if (styleMatches && parentMatches && baseStyleMatches && topMostMatches && visibleMatches && layeredMatches)
+            if (styleMatches && parentMatches && baseStyleMatches && topMostMatches && visibleMatches && minimizedMatches && maximizedMatches && placementMatches && layeredMatches)
                 DeleteJournal();
             else
-                _log.Error($"Keeping Qwen recovery journal because restoration verification failed: parent={parentMatches}, style={styleMatches}, baseStyle={baseStyleMatches}, topmost={topMostMatches}, visible={visibleMatches}, layered={layeredMatches}");
+                _log.Error($"Keeping Qwen recovery journal because restoration verification failed: parent={parentMatches}, style={styleMatches}, baseStyle={baseStyleMatches}, topmost={topMostMatches}, visible={visibleMatches}, minimized={minimizedMatches}, maximized={maximizedMatches}, placement={placementMatches}, layered={layeredMatches}");
         }
         catch (Exception ex)
         {
@@ -288,7 +298,16 @@ public sealed class WindowRecoveryService
                 placementOk = Native.SetWindowPlacement(hwnd, ref placement);
             }
 
-            Native.ShowWindow(hwnd, snapshot.OriginalVisible ? Native.SW_SHOW : Native.SW_HIDE);
+            // ShowWindow after SetWindowPlacement must preserve the recorded visual state. A generic
+            // SW_SHOW would silently turn a minimized/maximized Qwen into a normal window.
+            var showCommand = !snapshot.OriginalVisible
+                ? Native.SW_HIDE
+                : snapshot.OriginalMinimized
+                    ? Native.SW_SHOWMINIMIZED
+                    : snapshot.OriginalMaximized
+                        ? Native.SW_SHOWMAXIMIZED
+                        : Native.SW_SHOW;
+            Native.ShowWindow(hwnd, showCommand);
 
             // GetParent's interpretation depends on WS_CHILD. Check only after both style words have
             // been restored; checking immediately after SetParent(..., NULL) falsely reports desktop
@@ -296,9 +315,15 @@ public sealed class WindowRecoveryService
             if (snapshot.RecoverySchemaVersion >= 2)
                 parentOk = Native.GetParent(hwnd).ToInt64() == snapshot.OriginalParent;
 
-            if (!parentOk || !baseStyleOk || !styleOk || !layeredOk || !topMostOk || !placementOk)
+            var visualStateOk = snapshot.RecoverySchemaVersion < 2 ||
+                (Native.IsWindowVisible(hwnd) == snapshot.OriginalVisible &&
+                 Native.IsIconic(hwnd) == snapshot.OriginalMinimized &&
+                 Native.IsZoomed(hwnd) == snapshot.OriginalMaximized &&
+                 MatchesOriginalPlacement(hwnd, snapshot));
+
+            if (!parentOk || !baseStyleOk || !styleOk || !layeredOk || !topMostOk || !placementOk || !visualStateOk)
             {
-                _log.Error($"Qwen window recovery incomplete; keeping journal for retry. parent={parentOk}, baseStyle={baseStyleOk}, style={styleOk}, layered={layeredOk}, topmost={topMostOk}, placement={placementOk}");
+                _log.Error($"Qwen window recovery incomplete; keeping journal for retry. parent={parentOk}, baseStyle={baseStyleOk}, style={styleOk}, layered={layeredOk}, topmost={topMostOk}, placement={placementOk}, visualState={visualStateOk}");
                 return false;
             }
 
@@ -327,6 +352,15 @@ public sealed class WindowRecoveryService
     {
         try { return JsonSerializer.Deserialize<WindowRecoverySnapshot>(File.ReadAllText(_path)); }
         catch { return null; }
+    }
+
+    private static bool MatchesOriginalPlacement(IntPtr hwnd, WindowRecoverySnapshot snapshot)
+    {
+        if (!Native.TryGetWindowPlacement(hwnd, out var current)) return false;
+        return current.RcNormalPosition.Left == snapshot.PlacementLeft &&
+               current.RcNormalPosition.Top == snapshot.PlacementTop &&
+               current.RcNormalPosition.Right == snapshot.PlacementRight &&
+               current.RcNormalPosition.Bottom == snapshot.PlacementBottom;
     }
 
     private void DeleteJournal()

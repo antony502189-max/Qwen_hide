@@ -34,6 +34,7 @@ internal static class Native
     public const int SW_RESTORE = 9;
     public const uint GA_ROOT = 2;
     public const uint PW_RENDERFULLCONTENT = 0x00000002;
+    public const uint WM_CLOSE = 0x0010;
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLong", SetLastError = true)]
     private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
@@ -112,6 +113,10 @@ internal static class Native
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -135,6 +140,16 @@ internal static class Native
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetWindowDpiAwarenessContext(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AreDpiAwarenessContextsEqual(IntPtr dpiContextA, IntPtr dpiContextB);
+
+    [DllImport("user32.dll")]
+    public static extern int GetAwarenessFromDpiAwarenessContext(IntPtr value);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -190,6 +205,14 @@ internal static class Native
 
     public static bool IsMinimizedCoordinate(RECT rect) =>
         rect.Left <= -30000 || rect.Top <= -30000 || rect.Right <= -30000 || rect.Bottom <= -30000;
+
+    public static string DescribeDpiAwarenessContext(IntPtr context) => GetAwarenessFromDpiAwarenessContext(context) switch
+    {
+        0 => "Unaware",
+        1 => "SystemAware",
+        2 => "PerMonitorAware",
+        _ => context == IntPtr.Zero ? "Unavailable" : "Unknown"
+    };
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT

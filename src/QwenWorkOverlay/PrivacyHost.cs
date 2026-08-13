@@ -72,6 +72,9 @@ internal sealed class PrivacyHostSession : IDisposable
     public uint VerifiedAffinity { get; private set; }
     public uint HostDpi { get; private set; }
     public uint QwenDpi { get; private set; }
+    public IntPtr HostDpiAwarenessContext { get; private set; }
+    public IntPtr QwenDpiAwarenessContext { get; private set; }
+    public CapturePathProbeResult GdiProbe { get; private set; } = CapturePathProbeResult.NotRun;
 
     public bool TryEnable(QwenTarget target)
     {
@@ -92,6 +95,8 @@ internal sealed class PrivacyHostSession : IDisposable
             OriginalParent = Native.GetParent(target.Hwnd);
             QwenDpi = Native.GetDpiForWindow(target.Hwnd);
             if (QwenDpi == 0) return Fail("GetDpiForWindow(Qwen) failed; refusing DPI-unsafe reparenting");
+            QwenDpiAwarenessContext = Native.GetWindowDpiAwarenessContext(target.Hwnd);
+            if (QwenDpiAwarenessContext == IntPtr.Zero) return Fail("Qwen DPI-awareness context is unavailable; refusing cross-process reparenting");
             if (!_recovery.HasPendingSnapshot) return Fail("Verified recovery journal is absent");
 
             _host = new PrivacyHostWindow(rect, QwenDpi);
@@ -103,6 +108,9 @@ internal sealed class PrivacyHostSession : IDisposable
             HostDpi = Native.GetDpiForWindow(hostHwnd);
             if (!PrivacyHostPolicy.IsDpiCompatible(HostDpi, QwenDpi))
                 return Fail($"DPI mismatch: host={HostDpi}, Qwen={QwenDpi}");
+            HostDpiAwarenessContext = Native.GetWindowDpiAwarenessContext(hostHwnd);
+            if (!PrivacyHostPolicy.IsDpiAwarenessCompatible(HostDpiAwarenessContext, QwenDpiAwarenessContext))
+                return Fail($"DPI-awareness mismatch: host={Native.DescribeDpiAwarenessContext(HostDpiAwarenessContext)}, Qwen={Native.DescribeDpiAwarenessContext(QwenDpiAwarenessContext)}");
 
             Marshal.SetLastPInvokeError(0);
             if (!Native.SetWindowDisplayAffinity(hostHwnd, RequestedAffinity))
@@ -126,14 +134,48 @@ internal sealed class PrivacyHostSession : IDisposable
 
             _host.AttachChild(target.Hwnd);
             State = CapturePrivacyState.Enabled;
+            GdiProbe = CapturePathProbeResult.NotRun;
             Status = "ON (host affinity verified; capture compatibility still requires per-pipeline validation)";
-            _log.Info($"Privacy host enabled: host=0x{hostHwnd.ToInt64():X}, qwen=0x{target.Hwnd.ToInt64():X}, dpi={HostDpi}, affinity=0x{affinity:X}");
+            _log.Info($"Privacy host enabled: host=0x{hostHwnd.ToInt64():X}, qwen=0x{target.Hwnd.ToInt64():X}, dpi={HostDpi}, dpiAwareness={Native.DescribeDpiAwarenessContext(HostDpiAwarenessContext)}, affinity=0x{affinity:X}");
             return true;
         }
         catch (Exception ex)
         {
             return Fail("Privacy host exception: " + ex.GetType().Name);
         }
+    }
+
+    public CapturePathProbeResult ValidateGdiScreenCopy()
+    {
+        if (State != CapturePrivacyState.Enabled || HostHwnd == IntPtr.Zero)
+        {
+            GdiProbe = new CapturePathProbeResult(CaptureProbeVerdict.Failed, 0, 0, 0,
+                "GDI probe requires an active verified privacy host");
+            return GdiProbe;
+        }
+
+        GdiProbe = CapturePathProbe.ValidateGdiScreenCopy(HostHwnd);
+        _log.Info($"Privacy GDI capture probe: verdict={GdiProbe.Verdict}, difference={GdiProbe.MeanRgbDifference:F1}, visibleVariance={GdiProbe.VisibleVariance:F1}, hiddenVariance={GdiProbe.HiddenVariance:F1}");
+        return GdiProbe;
+    }
+
+    // Once recovery has completed, the controller must obtain a new journal before it mutates Qwen
+    // again. This clears only the failed session bookkeeping; it never restores or changes Qwen.
+    public void ResetAfterVerifiedRecovery()
+    {
+        if (State != CapturePrivacyState.Failed) return;
+        CloseHost();
+        _target = null;
+        OriginalParent = IntPtr.Zero;
+        RequestedAffinity = Native.WDA_NONE;
+        VerifiedAffinity = Native.WDA_NONE;
+        HostDpi = 0;
+        QwenDpi = 0;
+        HostDpiAwarenessContext = IntPtr.Zero;
+        QwenDpiAwarenessContext = IntPtr.Zero;
+        GdiProbe = CapturePathProbeResult.NotRun;
+        State = CapturePrivacyState.Off;
+        Status = "OFF (Qwen must be reacquired after privacy recovery)";
     }
 
     public bool DisableAndRestore()

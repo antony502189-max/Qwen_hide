@@ -32,9 +32,11 @@ The controller only adds Windows-level conveniences around that existing window.
 
 The native Qwen top-level window belongs to Qwen, so the controller never calls `SetWindowDisplayAffinity` on that foreign HWND. **Toggle Privacy Host** creates a normal controller-owned top-level HWND, applies `WDA_EXCLUDEFROMCAPTURE` to that host, reads it back with `GetWindowDisplayAffinity`, and only then reparents the real installed Qwen HWND as a child.
 
-Before Qwen changes parent, the recovery journal durably records and verifies its parent, style/ex-style, `WINDOWPLACEMENT`, visibility, minimized/maximized state, TopMost state and DPI. Any failed journal, DPI match, affinity verification, style change or `SetParent` check restores Qwen and leaves privacy disabled. `Ctrl+Alt+Esc`, normal shutdown, unhandled-exception cleanup and next-start stale-journal recovery use the same restoration data.
+Before Qwen changes parent, the recovery journal durably records and verifies its parent, style/ex-style, `WINDOWPLACEMENT`, visibility, minimized/maximized state, TopMost state, DPI, and DPI-awareness context. The host must have both matching non-zero window DPI and an equivalent awareness context. Any failed journal, DPI check, affinity verification, style change or `SetParent` check restores Qwen and leaves privacy disabled. `Ctrl+Alt+Esc`, normal shutdown, unhandled-exception cleanup and next-start stale-journal recovery use the same restoration data.
 
 `Privacy host ON` means the host affinity was genuinely set and read back. It does **not** mean every capture product honors it. The controller cannot certify full-monitor sharing in Teams, Zoom, Google Meet, or Yandex Telemost without observing each product's shared output. Treat an application as unsupported until it passes the manual matrix in `MANUAL_TEST_CHECKLIST_EN.md`.
+
+The optional **Validate GDI Capture** action is a bounded 96×96 on-screen comparison while the active host is visible and briefly hidden. It stores only aggregate pixel statistics, not images. Its result is explicitly limited to legacy GDI screen copying: `LikelyExcluded`, `Exposed`, and `Inconclusive` never establish behavior for Desktop Duplication, Windows Graphics Capture, or conferencing software.
 
 ## 4. Requirements
 

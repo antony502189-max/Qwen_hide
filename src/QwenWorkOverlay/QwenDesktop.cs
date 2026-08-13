@@ -200,7 +200,9 @@ public sealed class QwenWindowController : IDisposable
     }
 
     public QwenTarget? Target => _target;
-    public bool IsAttached => _target is not null && Native.IsWindow(_target.Hwnd);
+    // A host-close recovery can restore Qwen synchronously, but the controller's cached snapshot
+    // is no longer a valid mutation lease. Force the normal reacquire/re-journal path first.
+    public bool IsAttached => _target is not null && PrivacyMutationPolicy.CanMutateNativeWindow(Native.IsWindow(_target.Hwnd), _privacy.State);
     public bool ClickThrough => _clickThrough;
     public double Opacity => _opacity;
     public bool TopMost => _topMost;
@@ -214,6 +216,9 @@ public sealed class QwenWindowController : IDisposable
     public uint VerifiedAffinity => _privacy.VerifiedAffinity;
     public uint HostDpi => _privacy.HostDpi;
     public uint QwenDpi => _privacy.QwenDpi;
+    public IntPtr HostDpiAwarenessContext => _privacy.HostDpiAwarenessContext;
+    public IntPtr QwenDpiAwarenessContext => _privacy.QwenDpiAwarenessContext;
+    public CapturePathProbeResult GdiCaptureProbe => _privacy.GdiProbe;
 
     public bool RecoverStaleState() => _recovery.TryRecoverStaleState();
 
@@ -222,6 +227,7 @@ public sealed class QwenWindowController : IDisposable
         if (IsAttached && _target!.Hwnd == target.Hwnd) return true;
         Detach(restore: true);
         if (!Native.IsWindow(target.Hwnd)) return false;
+        _privacy.ResetAfterVerifiedRecovery();
 
         _target = target;
         _originalExStyle = Native.GetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE);
@@ -431,6 +437,8 @@ public sealed class QwenWindowController : IDisposable
         }
         return ApplyStyles() && SetTopMost(_topMost);
     }
+
+    public CapturePathProbeResult ValidatePrivacyGdiCapture() => _privacy.ValidateGdiScreenCopy();
 
     public void Detach(bool restore)
     {

@@ -36,4 +36,7 @@ Write-Host '  The controller uses shared-mode capture and does not change Window
 Write-Host '  Audio endpoint names and selected IDs are shown in the controller Settings/Diagnostics UI.'
 Write-Host ''
 Write-Host 'Capture privacy note:'
-Write-Host '  The installed Qwen HWND belongs to another process. Safe native mode therefore does not claim WDA_EXCLUDEFROMCAPTURE support.'
+Write-Host '  The controller never applies WDA_EXCLUDEFROMCAPTURE directly to Qwen''s foreign HWND.'
+Write-Host '  Its optional Privacy Host applies and reads back WDA on a controller-owned top-level HWND before hosting real Qwen.'
+Write-Host '  Host affinity verification is not a guarantee for GDI, Desktop Duplication, Windows Graphics Capture, or conferencing apps.'
+Write-Host '  On this target, use the controller''s "Validate GDI Capture" result as a separate compatibility-matrix entry.'

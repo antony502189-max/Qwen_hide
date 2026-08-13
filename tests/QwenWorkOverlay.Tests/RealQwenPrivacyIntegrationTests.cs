@@ -67,9 +67,26 @@ public sealed class RealQwenPrivacyIntegrationTests
             Assert.Equal(Native.WDA_EXCLUDEFROMCAPTURE, controller.RequestedAffinity);
             Assert.Equal(Native.WDA_EXCLUDEFROMCAPTURE, controller.VerifiedAffinity);
             Assert.True(PrivacyHostPolicy.IsDpiCompatible(controller.HostDpi, controller.QwenDpi));
+            Assert.True(PrivacyHostPolicy.IsDpiAwarenessCompatible(controller.HostDpiAwarenessContext, controller.QwenDpiAwarenessContext));
 
-            Assert.True(controller.DisablePrivacyHost());
+            var gdiProbe = controller.ValidatePrivacyGdiCapture();
+            Assert.NotEqual(CaptureProbeVerdict.NotRun, gdiProbe.Verdict);
+            Assert.NotEqual(CaptureProbeVerdict.Failed, gdiProbe.Verdict);
+
+            // Exercise the same restoration path used if the controller-owned host disappears.
+            // This validates that Qwen cannot remain parented to a dead host and that the controller
+            // invalidates its old mutation lease afterwards.
+            Assert.True(Native.PostMessage(controller.PrivacyHostHwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero));
+            PumpUntil(() => controller.PrivacyState == CapturePrivacyState.Failed, TimeSpan.FromSeconds(5));
+            Assert.Equal(CapturePrivacyState.Failed, controller.PrivacyState);
+            Assert.False(controller.IsAttached);
             Assert.Equal(originalParent, Native.GetParent(qwen.Hwnd));
+
+            // A normal explicit disable must also work after the forced fresh attachment lease.
+            controller.Detach(restore: false);
+            Assert.True(controller.Attach(qwen, 1.0, false));
+            Assert.True(controller.EnablePrivacyHost());
+            Assert.True(controller.DisablePrivacyHost());
             Assert.Equal(originalStyle, Native.GetWindowLongPtr(qwen.Hwnd, Native.GWL_STYLE).ToInt64());
             Assert.Equal(originalExStyle, Native.GetWindowLongPtr(qwen.Hwnd, Native.GWL_EXSTYLE).ToInt64());
             Assert.True(Native.GetWindowRect(qwen.Hwnd, out var restoredRect));
@@ -89,5 +106,24 @@ public sealed class RealQwenPrivacyIntegrationTests
                 try { Directory.Delete(tempRoot, true); } catch { }
             }
         }
+    }
+
+    private static void PumpUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        if (condition()) return;
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+        timer.Tick += (_, _) =>
+        {
+            if (!condition() && timeout > TimeSpan.Zero)
+            {
+                timeout -= TimeSpan.FromMilliseconds(20);
+                return;
+            }
+            timer.Stop();
+            frame.Continue = false;
+        };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
     }
 }

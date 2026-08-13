@@ -160,6 +160,8 @@ This test deliberately terminates the controller to simulate a crash.
 
 - [ ] With Qwen visible and restored (not minimized), click **Toggle Privacy Host**.
 - [ ] Diagnostics shows a non-zero Privacy host HWND, Qwen child HWND, original/current parent, matching non-zero host/Qwen DPI, `WDA requested: 0x11`, and `WDA verified: 0x11`.
+- [ ] Click **Validate GDI Capture** and record its exact result. `LikelyExcluded` applies only to that legacy GDI screen-copy probe; `Exposed` or `Inconclusive` is not a privacy pass.
+- [x] Target-machine result (Windows 10 x64, Qwen 1.0.3): legacy GDI screen-copy probe returned **Exposed** (mean RGB difference 130.8). This pipeline is unsupported for exclusion on this machine.
 - [ ] Local monitor: Qwen remains visible and accepts mouse, keyboard, clipboard, resize, restore and maximize operations.
 - [ ] Click **Toggle Privacy Host** again and confirm the original parent, style, ex-style, placement, visibility and TopMost state are restored. Then test `Ctrl+Alt+Esc` while host mode is ON.
 - [ ] Microsoft Teams: share the **entire monitor**; observe the remote/shared preview. Record PASS only when Qwen is locally visible but absent from shared output.

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using MessageBox = System.Windows.MessageBox;
@@ -390,6 +391,11 @@ public partial class MainWindow : Window
         var currentCommunicationsInput = _devices.DefaultCommunicationsInput();
         var hotkeyState = _hotkeys is null ? "not initialized" : _hotkeys.FailureSummary;
         var version = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "unknown";
+        var controllerHwnd = new WindowInteropHelper(this).Handle;
+        var controllerDpi = controllerHwnd == IntPtr.Zero ? 0 : Native.GetDpiForWindow(controllerHwnd);
+        var controllerDpiAwareness = controllerHwnd == IntPtr.Zero
+            ? "Unavailable"
+            : Native.DescribeDpiAwarenessContext(Native.GetWindowDpiAwarenessContext(controllerHwnd));
 
         var text =
             $"Controller version: {version}\n" +
@@ -423,8 +429,15 @@ public partial class MainWindow : Window
             $"Qwen current parent: {FormatHwnd(_qwen.CurrentParent)}\n" +
             $"WDA requested: 0x{_qwen.RequestedAffinity:X}\n" +
             $"WDA verified: 0x{_qwen.VerifiedAffinity:X}\n" +
+            $"Controller DPI: {controllerDpi}\n" +
+            $"Controller DPI awareness: {controllerDpiAwareness}\n" +
             $"Host DPI: {_qwen.HostDpi}\n" +
             $"Qwen DPI: {_qwen.QwenDpi}\n" +
+            $"Host DPI awareness: {Native.DescribeDpiAwarenessContext(_qwen.HostDpiAwarenessContext)}\n" +
+            $"Qwen DPI awareness: {Native.DescribeDpiAwarenessContext(_qwen.QwenDpiAwarenessContext)}\n" +
+            $"GDI screen-copy probe: {_qwen.GdiCaptureProbe.Verdict}\n" +
+            $"GDI probe detail: {_qwen.GdiCaptureProbe.Detail}\n" +
+            $"GDI mean RGB difference: {_qwen.GdiCaptureProbe.MeanRgbDifference:F1}\n" +
             $"Recovery state: {(_qwen.PrivacyState == CapturePrivacyState.Enabled ? "privacy-host active" : "native window journal / normal")}\n" +
             $"Windows audio defaults unchanged: {defaultsSafe}\n" +
             $"Default input before: {_deviceGuard.InputBefore}\n" +
@@ -457,6 +470,12 @@ public partial class MainWindow : Window
 
     private void Click_Click(object sender, RoutedEventArgs e) => ToggleClickThrough();
     private void Privacy_Click(object sender, RoutedEventArgs e) => TogglePrivacyHost();
+    private void PrivacyGdiProbe_Click(object sender, RoutedEventArgs e)
+    {
+        var result = _qwen.ValidatePrivacyGdiCapture();
+        Toast("GDI capture probe: " + result.Verdict);
+        UpdateStatus();
+    }
     private void Diagnostics_Click(object sender, RoutedEventArgs e) => ShowDiagnostics();
 
     private void TogglePrivacyHost()
