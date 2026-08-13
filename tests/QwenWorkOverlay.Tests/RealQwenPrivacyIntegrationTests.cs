@@ -75,7 +75,10 @@ public sealed class RealQwenPrivacyIntegrationTests
             Assert.NotEqual(CaptureProbeVerdict.NotRun, gdiProbe.Verdict);
             Assert.NotEqual(CaptureProbeVerdict.Failed, gdiProbe.Verdict);
 
-            RunOptionalDesktopDuplicationProbe(logger, controller.PrivacyHostHwnd);
+            RunOptionalCaptureProbe(logger, controller.PrivacyHostHwnd,
+                "QDC_DESKTOP_DUPLICATION_PROBE", "Desktop Duplication", "RESULT DesktopDuplication=");
+            RunOptionalCaptureProbe(logger, controller.PrivacyHostHwnd,
+                "QDC_WINDOWS_GRAPHICS_CAPTURE_PROBE", "Windows Graphics Capture", "RESULT WindowsGraphicsCapture=");
 
             // Exercise the same restoration path used if the controller-owned host disappears.
             // This validates that Qwen cannot remain parented to a dead host and that the controller
@@ -131,11 +134,12 @@ public sealed class RealQwenPrivacyIntegrationTests
         Dispatcher.PushFrame(frame);
     }
 
-    private static void RunOptionalDesktopDuplicationProbe(AppLogger logger, IntPtr hostHwnd)
+    private static void RunOptionalCaptureProbe(AppLogger logger, IntPtr hostHwnd,
+        string environmentVariable, string capturePath, string expectedPrefix)
     {
-        var probe = Environment.GetEnvironmentVariable("QDC_DESKTOP_DUPLICATION_PROBE");
+        var probe = Environment.GetEnvironmentVariable(environmentVariable);
         if (string.IsNullOrWhiteSpace(probe)) return;
-        Assert.True(File.Exists(probe), "Configured Desktop Duplication probe does not exist: " + probe);
+        Assert.True(File.Exists(probe), "Configured " + capturePath + " probe does not exist: " + probe);
         using var process = Process.Start(new ProcessStartInfo(probe, "0x" + hostHwnd.ToInt64().ToString("X"))
         {
             UseShellExecute = false,
@@ -144,12 +148,12 @@ public sealed class RealQwenPrivacyIntegrationTests
             CreateNoWindow = true
         });
         Assert.NotNull(process);
-        Assert.True(process!.WaitForExit(10000), "Desktop Duplication probe timed out.");
+        Assert.True(process!.WaitForExit(10000), capturePath + " probe timed out.");
         var output = process.StandardOutput.ReadToEnd().Trim();
         var error = process.StandardError.ReadToEnd().Trim();
-        logger.Info("Privacy Desktop Duplication probe: " + output);
+        logger.Info("Privacy " + capturePath + " probe: " + output);
         Assert.Equal(0, process.ExitCode);
-        Assert.StartsWith("RESULT DesktopDuplication=", output);
-        Assert.True(string.IsNullOrWhiteSpace(error), "Desktop Duplication probe stderr: " + error);
+        Assert.StartsWith(expectedPrefix, output);
+        Assert.True(string.IsNullOrWhiteSpace(error), capturePath + " probe stderr: " + error);
     }
 }

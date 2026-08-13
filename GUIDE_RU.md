@@ -173,9 +173,9 @@ Controller намеренно не переписывает глобальный
 
 До изменения parent на диске сохраняются и проверяются исходные parent, style/ex-style, `WINDOWPLACEMENT`, видимость, minimized/maximized, TopMost, DPI и DPI-awareness context. Режим не включится без DWM composition, совпадающих DPI/context, подтверждённого affinity и проверенного `SetParent`; любой сбой откатывает Qwen. `Ctrl+Alt+Esc`, штатное завершение и восстановление после сбоя используют тот же journal.
 
-`Privacy host ON` означает только то, что affinity controller-owned host действительно установлен и прочитан обратно. Это **не** сертификат для любого capture pipeline. На целевой машине GDI screen copy показал `Exposed`; Desktop Duplication показал `RedactedPlaceholder` — содержимое Qwen не наблюдалось, но host не доказанно отсутствует. Windows Graphics Capture и full-monitor share в Teams, Zoom, Google Meet и Yandex Telemost ещё требуют отдельного наблюдения.
+`Privacy host ON` означает только то, что affinity controller-owned host действительно установлен и прочитан обратно. Это **не** сертификат для любого capture pipeline. На целевой машине GDI screen copy показал `Exposed`; Desktop Duplication показал `RedactedPlaceholder` — содержимое Qwen не наблюдалось, но host не доказанно отсутствует; full-monitor Windows Graphics Capture показал `LikelyExcluded`. Teams, Zoom, Google Meet и Yandex Telemost всё ещё требуют отдельного наблюдения shared output.
 
-Из папки release можно запустить `privacy-capture-probe.exe 0xHOSTHWND` (HWND берётся из Diagnostics): probe проверяет Desktop Duplication только по агрегированным пиксельным статистикам, кратко скрывает/восстанавливает host и не сохраняет screenshots или chat data. Результаты разных API нельзя переносить друг на друга.
+Из папки release можно запустить `privacy-capture-probe.exe 0xHOSTHWND` и `privacy-wgc-capture-probe.exe 0xHOSTHWND` (HWND берётся из Diagnostics): probes проверяют соответственно Desktop Duplication и full-monitor Windows Graphics Capture только по агрегированным пиксельным статистикам, кратко скрывают/восстанавливают host и не сохраняют screenshots или chat data. Результаты разных API нельзя переносить друг на друга.
 
 ## Runtime probe именно твоего Qwen
 

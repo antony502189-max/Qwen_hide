@@ -102,7 +102,9 @@ jobs:
           $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           & $winps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\build-privacy-capture-probe.ps1
           if ($LASTEXITCODE -ne 0) { throw "Desktop Duplication privacy probe compilation failed with exit code $LASTEXITCODE" }
-          if (-not (Test-Path .\tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe)) { throw 'Privacy capture probe executable was not created.' }
+          foreach ($probe in @('.\tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe','.\tools\PrivacyCaptureProbe\bin\privacy-wgc-capture-probe.exe')) {
+            if (-not (Test-Path $probe)) { throw "Privacy capture probe executable was not created: $probe" }
+          }
 
       - name: Restore
         run: dotnet restore QwenWorkOverlay.sln
@@ -129,12 +131,15 @@ jobs:
           $probe = '.\tools\PrivacyCaptureProbe\bin\privacy-capture-probe.exe'
           Copy-Item $probe (Join-Path 'dist' 'privacy-capture-probe.exe') -Force
           Copy-Item $probe (Join-Path 'dist-single' 'privacy-capture-probe.exe') -Force
+          $wgcProbe = '.\tools\PrivacyCaptureProbe\bin\privacy-wgc-capture-probe.exe'
+          Copy-Item $wgcProbe (Join-Path 'dist' 'privacy-wgc-capture-probe.exe') -Force
+          Copy-Item $wgcProbe (Join-Path 'dist-single' 'privacy-wgc-capture-probe.exe') -Force
 
       - name: Verify release payloads and generate hashes
         shell: pwsh
         run: |
           foreach ($dir in @('dist','dist-single')) {
-            $required = @('QwenDesktopController.exe','privacy-capture-probe.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
+            $required = @('QwenDesktopController.exe','privacy-capture-probe.exe','privacy-wgc-capture-probe.exe','runtime-probe.ps1','qwen-uia-probe.ps1','qwen-msaa-probe.ps1','calibrate-qwen-voice-click.ps1','diagnose.ps1','setup-virtual-audio.ps1','GUIDE_RU.md','RUN_ME_FIRST_RU.txt')
             foreach ($name in $required) {
               $path = Join-Path $dir $name
               if (-not (Test-Path $path)) { throw "Required release file not found: $path" }
