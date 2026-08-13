@@ -192,6 +192,19 @@ public class CoreTests
     }
 
     [Fact]
+    public async Task Diagnostics_snapshot_collects_gui_counts_off_the_ui_thread()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var snapshot = await new DiagnosticsService().CollectAsync(null, timeout.Token);
+        Assert.Equal(Environment.ProcessId, snapshot.Controller.Pid);
+        Assert.True(snapshot.Controller.WorkingSetBytes > 0);
+        Assert.True(snapshot.Controller.ThreadCount > 0);
+        Assert.True(snapshot.Controller.HandleCount > 0);
+        Assert.Equal("not attached", snapshot.Qwen.State);
+    }
+
+    [Fact]
     public void Legacy_recovery_journal_without_schema_is_not_misread_as_v2()
     {
         const string legacyJson = "{\"ProcessId\":123,\"Hwnd\":456,\"OriginalExStyle\":256}";
