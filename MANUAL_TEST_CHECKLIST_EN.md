@@ -168,6 +168,7 @@ This test deliberately terminates the controller to simulate a crash.
 - [x] Target-machine result: Desktop Duplication returned **RedactedPlaceholder** (difference 33.7; visible variance 0.0; hidden variance 2539.8). Qwen content was not observed, but the captured surface was not proven absent; do not call this strict `WDA_EXCLUDEFROMCAPTURE` PASS.
 - [x] Target-machine result: full-monitor Windows Graphics Capture has returned **RedactedPlaceholder** (latest run: difference 176.2; visible variance 0.0; hidden variance 1571.9); earlier samples were inconclusive. Neither result proves host absence or a conferencing-app pass.
 - [ ] Local monitor: Qwen remains visible and accepts mouse, keyboard, clipboard, resize, restore and maximize operations.
+- [x] Target-machine automated exercise: controller-host resize changed the hosted real Qwen dimensions, and both forced-host-close and normal-disable paths restored the original Qwen geometry.
 - [ ] Click **Toggle Privacy Host** again and confirm the original parent, style, ex-style, placement, visibility and TopMost state are restored. Then test `Ctrl+Alt+Esc` while host mode is ON.
 - [ ] Microsoft Teams: share the **entire monitor**; observe the remote/shared preview. Record PASS only when Qwen is locally visible but absent from shared output.
 - [ ] Zoom: share the **entire monitor**; observe the remote/shared preview and record PASS/UNSUPPORTED.

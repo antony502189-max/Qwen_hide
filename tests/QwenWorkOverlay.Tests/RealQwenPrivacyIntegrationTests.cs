@@ -70,6 +70,24 @@ public sealed class RealQwenPrivacyIntegrationTests
             Assert.True(PrivacyHostPolicy.IsDpiCompatible(controller.HostDpi, controller.QwenDpi));
             Assert.True(PrivacyHostPolicy.IsDpiAwarenessCompatible(controller.HostDpiAwarenessContext, controller.QwenDpiAwarenessContext));
 
+            // A hosted Qwen must track a controller-host resize rather than being left at stale
+            // coordinates or dimensions. The final restoration assertion below proves this is
+            // still fully reversible.
+            Assert.True(Native.GetWindowRect(controller.PrivacyHostHwnd, out var hostRect));
+            Assert.True(Native.GetWindowRect(qwen.Hwnd, out var hostedQwenRect));
+            var resizedWidth = Math.Max(600, hostRect.Right - hostRect.Left - 96);
+            var resizedHeight = Math.Max(400, hostRect.Bottom - hostRect.Top - 64);
+            Assert.True(Native.SetWindowPos(controller.PrivacyHostHwnd, IntPtr.Zero,
+                hostRect.Left, hostRect.Top, resizedWidth, resizedHeight,
+                Native.SWP_NOZORDER | Native.SWP_NOACTIVATE));
+            PumpUntil(() => Native.GetWindowRect(qwen.Hwnd, out var resizedQwenRect) &&
+                            (resizedQwenRect.Right - resizedQwenRect.Left) < (hostedQwenRect.Right - hostedQwenRect.Left) &&
+                            (resizedQwenRect.Bottom - resizedQwenRect.Top) < (hostedQwenRect.Bottom - hostedQwenRect.Top),
+                TimeSpan.FromSeconds(3));
+            Assert.True(Native.GetWindowRect(qwen.Hwnd, out var finalHostedQwenRect));
+            Assert.True(finalHostedQwenRect.Right - finalHostedQwenRect.Left < hostedQwenRect.Right - hostedQwenRect.Left);
+            Assert.True(finalHostedQwenRect.Bottom - finalHostedQwenRect.Top < hostedQwenRect.Bottom - hostedQwenRect.Top);
+
             var gdiProbe = controller.ValidatePrivacyGdiCapture();
             Assert.NotEqual(CaptureProbeVerdict.NotRun, gdiProbe.Verdict);
             Assert.NotEqual(CaptureProbeVerdict.Failed, gdiProbe.Verdict);

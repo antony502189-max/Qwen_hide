@@ -14,6 +14,8 @@ internal sealed class PrivacyHostWindow : Window
 {
     private IntPtr _child;
 
+    public event EventHandler? ChildResizeFailed;
+
     public PrivacyHostWindow(Native.RECT qwenRect, uint qwenDpi)
     {
         var scale = qwenDpi == 0 ? 1d : 96d / qwenDpi;
@@ -27,24 +29,28 @@ internal sealed class PrivacyHostWindow : Window
         Top = qwenRect.Top * scale;
         Width = Math.Max(1, (qwenRect.Right - qwenRect.Left) * scale);
         Height = Math.Max(1, (qwenRect.Bottom - qwenRect.Top) * scale);
-        SizeChanged += (_, _) => ResizeChild();
+        SizeChanged += (_, _) =>
+        {
+            if (!ResizeChild()) ChildResizeFailed?.Invoke(this, EventArgs.Empty);
+        };
     }
 
     public IntPtr Hwnd => new WindowInteropHelper(this).Handle;
 
-    public void AttachChild(IntPtr child)
+    public bool AttachChild(IntPtr child)
     {
         _child = child;
-        ResizeChild();
+        return ResizeChild();
     }
 
-    private void ResizeChild()
+    private bool ResizeChild()
     {
-        if (_child == IntPtr.Zero || !Native.IsWindow(_child) || Hwnd == IntPtr.Zero) return;
-        if (!Native.GetWindowRect(Hwnd, out var hostRect)) return;
+        if (_child == IntPtr.Zero) return true;
+        if (!Native.IsWindow(_child) || Hwnd == IntPtr.Zero || !Native.IsWindow(Hwnd)) return false;
+        if (!Native.GetWindowRect(Hwnd, out var hostRect)) return false;
         var width = Math.Max(1, hostRect.Right - hostRect.Left);
         var height = Math.Max(1, hostRect.Bottom - hostRect.Top);
-        Native.SetWindowPos(_child, IntPtr.Zero, 0, 0, width, height,
+        return Native.SetWindowPos(_child, IntPtr.Zero, 0, 0, width, height,
             Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW | Native.SWP_FRAMECHANGED);
     }
 }
@@ -108,6 +114,7 @@ internal sealed class PrivacyHostSession : IDisposable
 
             _host = new PrivacyHostWindow(rect, QwenDpi);
             _host.Closed += HostClosed;
+            _host.ChildResizeFailed += HostChildResizeFailed;
             _host.Show();
             var hostHwnd = _host.Hwnd;
             if (hostHwnd == IntPtr.Zero || !Native.IsWindow(hostHwnd)) return Fail("Privacy host HWND was not created");
@@ -143,7 +150,16 @@ internal sealed class PrivacyHostSession : IDisposable
             if (Native.GetParent(target.Hwnd) != hostHwnd)
                 return Fail("SetParent did not make Qwen a child of the privacy host; win32=" + Marshal.GetLastWin32Error());
 
-            _host.AttachChild(target.Hwnd);
+            // Cross-process SetParent can reset/change the child DPI context. Re-read it after
+            // parenting rather than assuming the pre-mutation value remains true.
+            QwenDpi = Native.GetDpiForWindow(target.Hwnd);
+            QwenDpiAwarenessContext = Native.GetWindowDpiAwarenessContext(target.Hwnd);
+            if (!PrivacyHostPolicy.IsDpiCompatible(HostDpi, QwenDpi) ||
+                !PrivacyHostPolicy.IsDpiAwarenessCompatible(HostDpiAwarenessContext, QwenDpiAwarenessContext))
+                return Fail($"DPI state changed after SetParent: host={HostDpi}/{Native.DescribeDpiAwarenessContext(HostDpiAwarenessContext)}, Qwen={QwenDpi}/{Native.DescribeDpiAwarenessContext(QwenDpiAwarenessContext)}");
+
+            if (!_host.AttachChild(target.Hwnd))
+                return Fail("Could not size the Qwen child inside the privacy host; win32=" + Marshal.GetLastWin32Error());
             State = CapturePrivacyState.Enabled;
             GdiProbe = CapturePathProbeResult.NotRun;
             PrintWindowProbe = CapturePathProbeResult.NotRun;
@@ -326,6 +342,15 @@ internal sealed class PrivacyHostSession : IDisposable
         _target = null;
     }
 
+    private void HostChildResizeFailed(object? sender, EventArgs e)
+    {
+        // Ignore construction-time notifications: TryEnable checks AttachChild synchronously and
+        // rolls back there. During an active session, a failed resize means the hosted child is no
+        // longer usable, so restore rather than leave Qwen trapped in a broken host.
+        if (State == CapturePrivacyState.Enabled)
+            Fail("Qwen child resize failed inside the privacy host; win32=" + Marshal.GetLastWin32Error());
+    }
+
     private void CloseHost()
     {
         var host = _host;
@@ -333,6 +358,7 @@ internal sealed class PrivacyHostSession : IDisposable
         _hostHwnd = IntPtr.Zero;
         if (host is null) return;
         host.Closed -= HostClosed;
+        host.ChildResizeFailed -= HostChildResizeFailed;
         try { host.Close(); } catch { }
     }
 
