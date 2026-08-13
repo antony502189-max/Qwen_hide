@@ -35,7 +35,9 @@ if (-not $SkipWindowsGraphicsCapture) {
         throw 'Windows SDK C++/WinRT headers are required for the Windows Graphics Capture privacy probe.'
     }
     $wgcObjectPath = Join-Path $outputDirectory 'WindowsGraphicsCaptureProbe.obj'
-    $command += ' && cl.exe /nologo /std:c++17 /EHsc /O2 /W4 /DUNICODE /D_UNICODE /I"' + $cppWinRtIncludePath + '" "' + $wgcSource + '" /Fo:"' + $wgcObjectPath + '" /Fe:"' + $wgcOutputPath + '" /link d3d11.lib dxgi.lib user32.lib windowsapp.lib'
+    # The pinned C++/WinRT projection uses the C++17 experimental coroutine header.
+    # Newer MSVC versions require this explicit compatibility acknowledgement.
+    $command += ' && cl.exe /nologo /std:c++17 /EHsc /O2 /W4 /DUNICODE /D_UNICODE /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /I"' + $cppWinRtIncludePath + '" "' + $wgcSource + '" /Fo:"' + $wgcObjectPath + '" /Fe:"' + $wgcOutputPath + '" /link d3d11.lib dxgi.lib user32.lib windowsapp.lib'
 }
 cmd.exe /d /c $command
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $OutputPath) -or ((-not $SkipWindowsGraphicsCapture) -and -not (Test-Path $wgcOutputPath))) { throw 'Privacy capture probe compilation failed.' }
