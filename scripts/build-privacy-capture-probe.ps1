@@ -1,4 +1,7 @@
-param([string]$OutputPath)
+param(
+    [string]$OutputPath,
+    [switch]$SkipWindowsGraphicsCapture
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -14,16 +17,20 @@ if (-not (Test-Path $devCmd)) { throw "Visual Studio developer command script no
 $outputDirectory = Split-Path -Parent $OutputPath
 New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 $wgcOutputPath = Join-Path $outputDirectory 'privacy-wgc-capture-probe.exe'
-$sdkIncludeRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
-$sdkInclude = Get-ChildItem -Path $sdkIncludeRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
-if (-not $sdkInclude -or -not (Test-Path (Join-Path $sdkInclude.FullName 'cppwinrt\winrt\base.h'))) {
-    throw 'Windows SDK C++/WinRT headers are required for the Windows Graphics Capture privacy probe.'
-}
 
 # cmd owns the Visual C++ environment; quote each path rather than relying on the current shell.
 $objectPath = Join-Path $outputDirectory 'PrivacyCaptureProbe.obj'
-$wgcObjectPath = Join-Path $outputDirectory 'WindowsGraphicsCaptureProbe.obj'
-$command = 'call "' + $devCmd + '" -arch=x64 -host_arch=x64 >nul && cl.exe /nologo /std:c++17 /EHsc /O2 /W4 /DUNICODE /D_UNICODE "' + $source + '" /Fo:"' + $objectPath + '" /Fe:"' + $OutputPath + '" /link d3d11.lib dxgi.lib user32.lib && cl.exe /nologo /std:c++17 /EHsc /O2 /W4 /DUNICODE /D_UNICODE /I"' + (Join-Path $sdkInclude.FullName 'cppwinrt') + '" "' + $wgcSource + '" /Fo:"' + $wgcObjectPath + '" /Fe:"' + $wgcOutputPath + '" /link d3d11.lib dxgi.lib user32.lib windowsapp.lib'
+$command = 'call "' + $devCmd + '" -arch=x64 -host_arch=x64 >nul && cl.exe /nologo /std:c++17 /EHsc /O2 /W4 /DUNICODE /D_UNICODE "' + $source + '" /Fo:"' + $objectPath + '" /Fe:"' + $OutputPath + '" /link d3d11.lib dxgi.lib user32.lib'
+if (-not $SkipWindowsGraphicsCapture) {
+    $sdkIncludeRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
+    $sdkInclude = Get-ChildItem -Path $sdkIncludeRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+    if (-not $sdkInclude -or -not (Test-Path (Join-Path $sdkInclude.FullName 'cppwinrt\winrt\base.h'))) {
+        throw 'Windows SDK C++/WinRT headers are required for the Windows Graphics Capture privacy probe.'
+    }
+    $wgcObjectPath = Join-Path $outputDirectory 'WindowsGraphicsCaptureProbe.obj'
+    $command += ' && cl.exe /nologo /std:c++17 /EHsc /O2 /W4 /DUNICODE /D_UNICODE /I"' + (Join-Path $sdkInclude.FullName 'cppwinrt') + '" "' + $wgcSource + '" /Fo:"' + $wgcObjectPath + '" /Fe:"' + $wgcOutputPath + '" /link d3d11.lib dxgi.lib user32.lib windowsapp.lib'
+}
 cmd.exe /d /c $command
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $OutputPath) -or -not (Test-Path $wgcOutputPath)) { throw 'Privacy capture probe compilation failed.' }
-Write-Host "Privacy capture probes built: $OutputPath; $wgcOutputPath"
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $OutputPath) -or ((-not $SkipWindowsGraphicsCapture) -and -not (Test-Path $wgcOutputPath))) { throw 'Privacy capture probe compilation failed.' }
+if ($SkipWindowsGraphicsCapture) { Write-Host "Desktop Duplication privacy probe built: $OutputPath" }
+else { Write-Host "Privacy capture probes built: $OutputPath; $wgcOutputPath" }
