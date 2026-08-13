@@ -1,0 +1,100 @@
+Qwen Desktop Controller - Release Audit
+=======================================
+
+Audit date: 2026-08-13
+Branch: refactor/native-qwen-controller
+Audited HEAD: 8c7bf6a54f97d025ee1f67391b963ff34d398c0c
+Pull request: #1 (not merged)
+
+Scope
+-----
+This audit covers the controller as a companion for the installed native Qwen Desktop application.
+It does not approve a browser wrapper, WebView, cloned UI, DLL injection, Qwen binary patching,
+remote-thread injection, process-memory modification, or authentication-data access.
+
+Evidence summary
+----------------
+Native target
+  PASS. The live target is the installed Qwen.exe, located by visible top-level HWND rather than a
+  hard-coded PID/HWND. The opt-in integration test exercised the real installed Qwen HWND.
+
+Privacy host architecture
+  IMPLEMENTED AND LIVE-TESTED. The controller creates its own top-level host HWND, applies
+  WDA_EXCLUDEFROMCAPTURE to that host, verifies it with GetWindowDisplayAffinity, and only then
+  reparents the real Qwen HWND. The controller does not present affinity on Qwen's foreign HWND as
+  a working privacy feature.
+
+Affinity verification
+  PASS FOR HOST CONFIGURATION. Real-target runs read back WDA_EXCLUDEFROMCAPTURE as 0x11.
+  This proves the host setting, not capture-application compatibility.
+
+Reparenting and restoration
+  PASS FOR TESTED PATHS. The real-Qwen integration test exercised host enable, child resize,
+  forced host closure, parent/style/geometry recovery, a fresh reattach, and normal host disable.
+  Recovery state is persisted before mutation and is verified before privacy mode is entered.
+  Ctrl+Alt+Esc and stale-journal recovery use the same restoration data.
+
+DPI
+  PASS FOR IMPLEMENTED SAFETY GATES. The host refuses zero/mismatched DPI or DPI-awareness
+  context, rereads Qwen DPI/context after cross-process SetParent, and restores on failure.
+  Automated physical-pixel to WPF-DIP geometry tests cover 100%, 125%, and 150% DPI. The real
+  target run was at 96 DPI (100%).
+
+Capture-path matrix
+  GDI screen copy: UNSUPPORTED. Target-machine testing observed Exposed Qwen host content. This
+  result is fail-closed and remains decisive even when later samples are inconclusive.
+  PrintWindow: INCONCLUSIVE. Direct host PrintWindow returned a uniform in-memory sample; this is
+  not a full-monitor-share result and is not a pass.
+  Desktop Duplication: INCONCLUSIVE / RedactedPlaceholder observed. No strict absence proof.
+  Windows Graphics Capture: INCONCLUSIVE / RedactedPlaceholder observed. No strict absence proof.
+  No probe writes screenshots, chat text, clipboard contents, or audio to disk.
+
+Full-monitor conferencing applications
+  Microsoft Teams: NOT YET OBSERVED.
+  Zoom: NOT YET OBSERVED. The installed signed-in client was inspected only for readiness; no
+  meeting or monitor share was started.
+  Google Meet: NOT YET OBSERVED.
+  Yandex Telemost: NOT YET OBSERVED.
+  A PASS requires observing the normal application's remote/shared output while Qwen remains
+  locally visible in privacy-host mode. Until then, each application is unvalidated, not protected.
+
+Controller features
+  Native attach/reacquire, opacity, TopMost, click-through, hide/show, clipboard screenshots,
+  clipboard paste, calibrated Ctrl+Shift+R voice toggle, Right Ctrl mixed-audio control, crash
+  recovery, and Ctrl+Alt+Esc emergency restoration are implemented with automated/native coverage.
+  Real calibration is used without collecting Qwen chat or authentication data.
+
+Audio
+  MIXER SAFETY IMPLEMENTED. Shared-mode mic/loopback processing, bounded buffers, clipping
+  protection, virtual-output recognition, and Windows default-device guards are covered.
+  END-TO-END QWEN MIXED INPUT NOT VALIDATED because this machine has no configured safe virtual
+  audio endpoint. The controller does not alter Windows default or communications audio endpoints.
+
+Build, tests, packaging, CI
+  LOCAL BUILD: PASS. Windows PowerShell 5.1 packaging build completed.
+  UNIT TESTS: PASS. 46/46 tests passed at audited HEAD.
+  REAL QWEN INTEGRATION: PASS. Opt-in real-host test passed at audited HEAD.
+  POWERSHELL 5.1: PASS. CI exercises runtime-probe and helper compatibility.
+  CI: PASS. Windows CI run 31707257945 passed architecture guard, restore, build, tests,
+  win-x64 multi-file publish, win-x64 single-file publish, payload verification, SHA-256 manifest
+  generation, and artifact upload.
+  ARTIFACTS: PASS. dist and dist-single payloads exist with SHA256SUMS.txt.
+
+Release verdict
+---------------
+NOT APPROVED FOR FULL-MONITOR SCREEN-SHARE PRIVACY.
+
+The controller-owned WDA host is genuine and recovery has been live-tested, but the stated release
+requirement is not satisfied: GDI has demonstrated exposure and the shared output of Teams, Zoom,
+Google Meet, and Telemost has not been observed. This audit intentionally does not convert an
+inconclusive/redacted capture API result into a conferencing-privacy PASS.
+
+Remaining manual/external validation
+-----------------------------------
+1. With Qwen privacy host enabled, observe the remote/shared preview for a normal full-monitor
+   share in Microsoft Teams.
+2. Repeat for Zoom, Google Meet, and Yandex Telemost.
+3. Record PASS only when Qwen remains locally visible and is absent from the actual shared output;
+   otherwise record that application as unsupported.
+4. Configure a recognised virtual audio endpoint, without changing Windows default endpoints, then
+   validate the end-to-end Right Ctrl mixed-audio delivery path.
