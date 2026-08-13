@@ -165,6 +165,12 @@ internal sealed class PrivacyHostSession : IDisposable
                 "GDI probe requires an active verified privacy host");
             return GdiProbe;
         }
+        if (!ReverifyAffinity())
+        {
+            GdiProbe = new CapturePathProbeResult(CaptureProbeVerdict.Failed, 0, 0, 0,
+                "Privacy host affinity changed before GDI validation");
+            return GdiProbe;
+        }
 
         GdiProbe = CapturePathProbe.ValidateGdiScreenCopy(HostHwnd);
         UpdateCaptureCompatibilityStatus();
@@ -178,6 +184,14 @@ internal sealed class PrivacyHostSession : IDisposable
         {
             var failure = new NativeCaptureProbeResult(CaptureProbeVerdict.Failed,
                 "Native capture probes require an active verified privacy host");
+            DesktopDuplicationProbe = failure;
+            WindowsGraphicsCaptureProbe = failure;
+            return (failure, failure);
+        }
+        if (!ReverifyAffinity())
+        {
+            var failure = new NativeCaptureProbeResult(CaptureProbeVerdict.Failed,
+                "Privacy host affinity changed before native capture validation");
             DesktopDuplicationProbe = failure;
             WindowsGraphicsCaptureProbe = failure;
             return (failure, failure);
@@ -254,6 +268,18 @@ internal sealed class PrivacyHostSession : IDisposable
         CloseHost();
         _target = null;
         return false;
+    }
+
+    private bool ReverifyAffinity()
+    {
+        if (HostHwnd == IntPtr.Zero || !Native.GetWindowDisplayAffinity(HostHwnd, out var affinity) ||
+            !PrivacyHostPolicy.IsVerifiedAffinity(RequestedAffinity, affinity))
+        {
+            return Fail("GetWindowDisplayAffinity(host) no longer verifies WDA_EXCLUDEFROMCAPTURE");
+        }
+
+        VerifiedAffinity = affinity;
+        return true;
     }
 
     private void UpdateCaptureCompatibilityStatus()

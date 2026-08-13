@@ -48,12 +48,13 @@ static HRESULT GetOutputForMonitor(ID3D11Device* device, HMONITOR monitor, IDXGI
 }
 
 static HRESULT CaptureSample(ID3D11Device* device, IDXGIOutputDuplication* duplication,
-    const RECT& desktopRect, const RECT& hostRect, Sample* result)
+    const RECT& desktopRect, const RECT& hostRect, Sample* result, LARGE_INTEGER* presentTime)
 {
     ComPtr<IDXGIResource> resource;
     DXGI_OUTDUPL_FRAME_INFO frame{};
     HRESULT hr = duplication->AcquireNextFrame(1000, &frame, &resource);
     if (FAILED(hr)) return hr;
+    if (presentTime) *presentTime = frame.LastPresentTime;
 
     ComPtr<ID3D11Texture2D> texture;
     hr = resource.As(&texture);
@@ -113,6 +114,16 @@ static HRESULT CaptureSample(ID3D11Device* device, IDXGIOutputDuplication* dupli
     return S_OK;
 }
 
+static void FlushDesktopCompositor()
+{
+    using DwmFlushFn = HRESULT(WINAPI*)();
+    const auto dwmapi = GetModuleHandleW(L"dwmapi.dll");
+    const auto flush = dwmapi
+        ? reinterpret_cast<DwmFlushFn>(GetProcAddress(dwmapi, "DwmFlush"))
+        : nullptr;
+    if (flush) flush();
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     if (argc != 2)
@@ -159,18 +170,29 @@ int wmain(int argc, wchar_t** argv)
     }
 
     Sample visible, hidden;
-    hr = CaptureSample(device.Get(), duplication.Get(), outputDesc.DesktopCoordinates, hostRect, &visible);
+    LARGE_INTEGER visiblePresent{}, hiddenPresent{}, hideRequested{};
+    hr = CaptureSample(device.Get(), duplication.Get(), outputDesc.DesktopCoordinates, hostRect, &visible, &visiblePresent);
     if (SUCCEEDED(hr))
     {
+        QueryPerformanceCounter(&hideRequested);
         ShowWindowAsync(host, SW_HIDE);
+        FlushDesktopCompositor();
         Sleep(120);
-        hr = CaptureSample(device.Get(), duplication.Get(), outputDesc.DesktopCoordinates, hostRect, &hidden);
+        hr = CaptureSample(device.Get(), duplication.Get(), outputDesc.DesktopCoordinates, hostRect, &hidden, &hiddenPresent);
         ShowWindowAsync(host, SW_SHOWNOACTIVATE);
+        FlushDesktopCompositor();
     }
     if (FAILED(hr) || visible.pixels.size() != hidden.pixels.size())
     {
         std::wprintf(L"RESULT DesktopDuplication=FAILED Detail=capture-0x%08X\n", static_cast<unsigned>(hr));
         return 7;
+    }
+    // A queued Desktop Duplication frame from before SW_HIDE would make visible and hidden samples
+    // look identical and could be mistaken for exclusion. Refuse that weak evidence.
+    if (hiddenPresent.QuadPart == 0 || hiddenPresent.QuadPart <= hideRequested.QuadPart)
+    {
+        std::wprintf(L"RESULT DesktopDuplication=FAILED Detail=pre-hide-frame\n");
+        return 8;
     }
 
     double difference = 0;
