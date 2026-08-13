@@ -74,6 +74,11 @@ public sealed class RealQwenPrivacyIntegrationTests
             Assert.NotEqual(CaptureProbeVerdict.NotRun, gdiProbe.Verdict);
             Assert.NotEqual(CaptureProbeVerdict.Failed, gdiProbe.Verdict);
 
+            // PrintWindow is a distinct direct-window capture path. A platform/application result
+            // may be inconclusive, but the probe itself must run and report that fact.
+            var printWindowProbe = controller.ValidatePrivacyPrintWindowCapture();
+            Assert.NotEqual(CaptureProbeVerdict.NotRun, printWindowProbe.Verdict);
+
             StageAndRunOptionalNativeCaptureProbes(controller);
 
             // Exercise the same restoration path used if the controller-owned host disappears.

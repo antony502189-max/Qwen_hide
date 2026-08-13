@@ -55,6 +55,31 @@ internal static class CapturePathProbe
         }
     }
 
+    public static CapturePathProbeResult ValidatePrintWindow(IntPtr hostHwnd)
+    {
+        if (hostHwnd == IntPtr.Zero || !Native.IsWindow(hostHwnd) || !Native.IsWindowVisible(hostHwnd) ||
+            !Native.GetWindowRect(hostHwnd, out var rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top)
+            return new(CaptureProbeVerdict.Failed, 0, 0, 0, "Privacy host is not visible for PrintWindow validation");
+
+        try
+        {
+            var sample = CapturePrintWindowSample(hostHwnd, rect, out var rendered);
+            if (!rendered)
+                return new(CaptureProbeVerdict.Failed, 0, 0, 0, "PrintWindow did not render the privacy host");
+
+            var variance = Variance(sample);
+            var verdict = CaptureProbePolicy.ClassifyPrintWindow(variance);
+            var detail = verdict == CaptureProbeVerdict.Exposed
+                ? "PrintWindow directly rendered non-uniform host content; this API is exposed and is not a full-monitor-share result"
+                : "PrintWindow returned a uniform/blank sample; direct-capture behavior is inconclusive";
+            return new(verdict, 0, variance, 0, detail);
+        }
+        catch (Exception ex)
+        {
+            return new(CaptureProbeVerdict.Failed, 0, 0, 0, "PrintWindow capture probe failed: " + ex.GetType().Name);
+        }
+    }
+
     // Four bounded patches (rather than a centre-only image) are sampled across Qwen's actual
     // content. This avoids declaring an animated or empty chat centre a capture result.
     private static PixelSample CaptureDistributedSample(Native.RECT rect)
@@ -75,6 +100,31 @@ internal static class CapturePathProbe
                 var color = bitmap.GetPixel(x, y);
                 sample.Pixels.Add((color.R, color.G, color.B));
             }
+        }
+        return sample;
+    }
+
+    private static PixelSample CapturePrintWindowSample(IntPtr hwnd, Native.RECT rect, out bool rendered)
+    {
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        using var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            var hdc = graphics.GetHdc();
+            try { rendered = Native.PrintWindow(hwnd, hdc, Native.PW_RENDERFULLCONTENT); }
+            finally { graphics.ReleaseHdc(hdc); }
+        }
+
+        var sample = new PixelSample();
+        const int grid = 24;
+        for (var y = 0; y < grid; y++)
+        for (var x = 0; x < grid; x++)
+        {
+            var sampleX = Math.Clamp(((2 * x + 1) * width) / (2 * grid), 0, width - 1);
+            var sampleY = Math.Clamp(((2 * y + 1) * height) / (2 * grid), 0, height - 1);
+            var color = bitmap.GetPixel(sampleX, sampleY);
+            sample.Pixels.Add((color.R, color.G, color.B));
         }
         return sample;
     }

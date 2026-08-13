@@ -224,6 +224,17 @@ public class CoreTests
     }
 
     [Theory]
+    [InlineData(0, CaptureProbeVerdict.Inconclusive)]
+    [InlineData(5.9, CaptureProbeVerdict.Inconclusive)]
+    [InlineData(6, CaptureProbeVerdict.Exposed)]
+    [InlineData(double.NaN, CaptureProbeVerdict.Failed)]
+    public void PrintWindow_probe_treats_rendered_nonuniform_host_content_as_direct_capture_exposure(
+        double visibleVariance, CaptureProbeVerdict expected)
+    {
+        Assert.Equal(expected, CaptureProbePolicy.ClassifyPrintWindow(visibleVariance));
+    }
+
+    [Theory]
     [InlineData("RESULT DesktopDuplication=REDACTED_PLACEHOLDER Difference=33.7", "RESULT DesktopDuplication=", CaptureProbeVerdict.RedactedPlaceholder)]
     [InlineData("RESULT WindowsGraphicsCapture=LIKELY_EXCLUDED Difference=0.0", "RESULT WindowsGraphicsCapture=", CaptureProbeVerdict.Inconclusive)]
     [InlineData("RESULT WindowsGraphicsCapture=EXPOSED Difference=48.0", "RESULT WindowsGraphicsCapture=", CaptureProbeVerdict.Exposed)]
@@ -247,9 +258,22 @@ public class CoreTests
     {
         var status = CapturePrivacyStatusPolicy.Build(
             CaptureProbeVerdict.Exposed,
+            CaptureProbeVerdict.NotRun,
             CaptureProbeVerdict.RedactedPlaceholder,
             CaptureProbeVerdict.Inconclusive);
         Assert.Contains("CAPTURE EXPOSED by GDI", status);
+        Assert.Contains("do not share Qwen", status);
+    }
+
+    [Fact]
+    public void Printwindow_exposure_has_a_fail_closed_privacy_status()
+    {
+        var status = CapturePrivacyStatusPolicy.Build(
+            CaptureProbeVerdict.Inconclusive,
+            CaptureProbeVerdict.Exposed,
+            CaptureProbeVerdict.Inconclusive,
+            CaptureProbeVerdict.Inconclusive);
+        Assert.Contains("CAPTURE EXPOSED by PrintWindow", status);
         Assert.Contains("do not share Qwen", status);
     }
 

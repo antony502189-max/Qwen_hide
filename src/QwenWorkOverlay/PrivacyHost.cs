@@ -79,6 +79,7 @@ internal sealed class PrivacyHostSession : IDisposable
     public IntPtr HostDpiAwarenessContext { get; private set; }
     public IntPtr QwenDpiAwarenessContext { get; private set; }
     public CapturePathProbeResult GdiProbe { get; private set; } = CapturePathProbeResult.NotRun;
+    public CapturePathProbeResult PrintWindowProbe { get; private set; } = CapturePathProbeResult.NotRun;
     public NativeCaptureProbeResult DesktopDuplicationProbe { get; private set; } = NativeCaptureProbeResult.NotRun;
     public NativeCaptureProbeResult WindowsGraphicsCaptureProbe { get; private set; } = NativeCaptureProbeResult.NotRun;
 
@@ -145,6 +146,7 @@ internal sealed class PrivacyHostSession : IDisposable
             _host.AttachChild(target.Hwnd);
             State = CapturePrivacyState.Enabled;
             GdiProbe = CapturePathProbeResult.NotRun;
+            PrintWindowProbe = CapturePathProbeResult.NotRun;
             DesktopDuplicationProbe = NativeCaptureProbeResult.NotRun;
             WindowsGraphicsCaptureProbe = NativeCaptureProbeResult.NotRun;
             Status = "ACTIVE — host WDA verified; capture exclusion is not yet validated";
@@ -176,6 +178,27 @@ internal sealed class PrivacyHostSession : IDisposable
         UpdateCaptureCompatibilityStatus();
         _log.Info($"Privacy GDI capture probe: verdict={GdiProbe.Verdict}, difference={GdiProbe.MeanRgbDifference:F1}, visibleVariance={GdiProbe.VisibleVariance:F1}, hiddenVariance={GdiProbe.HiddenVariance:F1}");
         return GdiProbe;
+    }
+
+    public CapturePathProbeResult ValidatePrintWindowCapture()
+    {
+        if (State != CapturePrivacyState.Enabled || HostHwnd == IntPtr.Zero)
+        {
+            PrintWindowProbe = new CapturePathProbeResult(CaptureProbeVerdict.Failed, 0, 0, 0,
+                "PrintWindow probe requires an active verified privacy host");
+            return PrintWindowProbe;
+        }
+        if (!ReverifyAffinity())
+        {
+            PrintWindowProbe = new CapturePathProbeResult(CaptureProbeVerdict.Failed, 0, 0, 0,
+                "Privacy host affinity changed before PrintWindow validation");
+            return PrintWindowProbe;
+        }
+
+        PrintWindowProbe = CapturePathProbe.ValidatePrintWindow(HostHwnd);
+        UpdateCaptureCompatibilityStatus();
+        _log.Info($"Privacy PrintWindow capture probe: verdict={PrintWindowProbe.Verdict}, visibleVariance={PrintWindowProbe.VisibleVariance:F1}");
+        return PrintWindowProbe;
     }
 
     public async Task<(NativeCaptureProbeResult DesktopDuplication, NativeCaptureProbeResult WindowsGraphicsCapture)> ValidateNativeCapturePathsAsync()
@@ -223,6 +246,7 @@ internal sealed class PrivacyHostSession : IDisposable
         HostDpiAwarenessContext = IntPtr.Zero;
         QwenDpiAwarenessContext = IntPtr.Zero;
         GdiProbe = CapturePathProbeResult.NotRun;
+        PrintWindowProbe = CapturePathProbeResult.NotRun;
         DesktopDuplicationProbe = NativeCaptureProbeResult.NotRun;
         WindowsGraphicsCaptureProbe = NativeCaptureProbeResult.NotRun;
         State = CapturePrivacyState.Off;
@@ -286,6 +310,7 @@ internal sealed class PrivacyHostSession : IDisposable
     {
         Status = CapturePrivacyStatusPolicy.Build(
             GdiProbe.Verdict,
+            PrintWindowProbe.Verdict,
             DesktopDuplicationProbe.Verdict,
             WindowsGraphicsCaptureProbe.Verdict);
     }

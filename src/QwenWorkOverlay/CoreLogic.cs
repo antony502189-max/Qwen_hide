@@ -123,17 +123,27 @@ public static class CaptureProbePolicy
         if (meanRgbDifference >= 18) return CaptureProbeVerdict.Exposed;
         return CaptureProbeVerdict.Inconclusive;
     }
+
+    // PrintWindow asks the target to render directly into a supplied DC. It is not equivalent to
+    // a full-monitor share: a non-uniform successful sample is positive evidence of direct capture.
+    public static CaptureProbeVerdict ClassifyPrintWindow(double visibleVariance)
+    {
+        if (!double.IsFinite(visibleVariance)) return CaptureProbeVerdict.Failed;
+        return visibleVariance >= 6 ? CaptureProbeVerdict.Exposed : CaptureProbeVerdict.Inconclusive;
+    }
 }
 
 public static class CapturePrivacyStatusPolicy
 {
     public static string Build(
         CaptureProbeVerdict gdi,
+        CaptureProbeVerdict printWindow,
         CaptureProbeVerdict desktopDuplication,
         CaptureProbeVerdict windowsGraphicsCapture)
     {
         var exposed = new List<string>();
         if (gdi == CaptureProbeVerdict.Exposed) exposed.Add("GDI");
+        if (printWindow == CaptureProbeVerdict.Exposed) exposed.Add("PrintWindow");
         if (desktopDuplication == CaptureProbeVerdict.Exposed) exposed.Add("Desktop Duplication");
         if (windowsGraphicsCapture == CaptureProbeVerdict.Exposed) exposed.Add("Windows Graphics Capture");
 

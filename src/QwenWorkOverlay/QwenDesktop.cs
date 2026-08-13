@@ -220,6 +220,7 @@ public sealed class QwenWindowController : IDisposable
     public IntPtr QwenDpiAwarenessContext => _privacy.QwenDpiAwarenessContext;
     public bool DwmCompositionEnabled => _privacy.DwmCompositionEnabled;
     public CapturePathProbeResult GdiCaptureProbe => _privacy.GdiProbe;
+    public CapturePathProbeResult PrintWindowCaptureProbe => _privacy.PrintWindowProbe;
     public NativeCaptureProbeResult DesktopDuplicationCaptureProbe => _privacy.DesktopDuplicationProbe;
     public NativeCaptureProbeResult WindowsGraphicsCaptureProbe => _privacy.WindowsGraphicsCaptureProbe;
 
@@ -442,6 +443,7 @@ public sealed class QwenWindowController : IDisposable
     }
 
     public CapturePathProbeResult ValidatePrivacyGdiCapture() => _privacy.ValidateGdiScreenCopy();
+    public CapturePathProbeResult ValidatePrivacyPrintWindowCapture() => _privacy.ValidatePrintWindowCapture();
     public Task<(NativeCaptureProbeResult DesktopDuplication, NativeCaptureProbeResult WindowsGraphicsCapture)> ValidatePrivacyNativeCapturePathsAsync() =>
         _privacy.ValidateNativeCapturePathsAsync();
 
