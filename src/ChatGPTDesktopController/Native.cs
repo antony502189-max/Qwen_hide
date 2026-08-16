@@ -32,11 +32,11 @@ internal static class Native
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hWnd, StringBuilder text, int max);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
     [DllImport("user32.dll", SetLastError = true)] public static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint key, byte alpha, uint flags);
-    [DllImport("user32.dll")] public static extern bool GetLayeredWindowAttributes(IntPtr hWnd, out uint key, out byte alpha, out uint flags);
-    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool GetLayeredWindowAttributes(IntPtr hWnd, out uint key, out byte alpha, out uint flags);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -47,20 +47,35 @@ internal static class Native
     [DllImport("user32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
-    [DllImport("user32.dll")] public static extern uint SendInput(uint count, INPUT[] input, int size);
-    [DllImport("user32.dll")] public static extern bool GetWindowPlacement(IntPtr hwnd, ref WINDOWPLACEMENT placement);
-    [DllImport("user32.dll")] public static extern bool SetWindowPlacement(IntPtr hwnd, [In] ref WINDOWPLACEMENT placement);
+    [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint count, INPUT[] input, int size);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool GetWindowPlacement(IntPtr hwnd, ref WINDOWPLACEMENT placement);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPlacement(IntPtr hwnd, [In] ref WINDOWPLACEMENT placement);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
     [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr h);
 
     public static string WindowText(IntPtr hwnd) { var b = new StringBuilder(GetWindowTextLength(hwnd) + 1); GetWindowText(hwnd, b, b.Capacity); return b.ToString(); }
     public static string WindowClass(IntPtr hwnd) { var b = new StringBuilder(256); GetClassName(hwnd, b, b.Capacity); return b.ToString(); }
+
     public static IEnumerable<IntPtr> TopLevelWindows(uint pid)
     {
         var list = new List<IntPtr>();
         EnumWindows((h, _) => { GetWindowThreadProcessId(h, out var owner); if (owner == pid) list.Add(h); return true; }, IntPtr.Zero);
         return list;
     }
-    public static bool TryPlacement(IntPtr hwnd, out WINDOWPLACEMENT p) { p = new WINDOWPLACEMENT { Length = Marshal.SizeOf<WINDOWPLACEMENT>() }; return GetWindowPlacement(hwnd, ref p); }
+
+    public static bool TryPlacement(IntPtr hwnd, out WINDOWPLACEMENT p)
+    {
+        p = new WINDOWPLACEMENT { Length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+        return GetWindowPlacement(hwnd, ref p);
+    }
+
+    public static bool TrySetWindowLongPtr(IntPtr hwnd, int index, IntPtr value)
+    {
+        Marshal.SetLastPInvokeError(0);
+        var previous = SetWindowLongPtr(hwnd, index, value);
+        return previous != IntPtr.Zero || Marshal.GetLastPInvokeError() == 0;
+    }
+
     public static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+    public static bool IsTopMost(IntPtr hwnd) => (GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) != 0;
 }

@@ -9,75 +9,194 @@ public sealed class WindowController : IDisposable
     private bool _originalTopMost, _originalVisible, _originalLayered, _journaled, _hiddenFromMinimized, _hiddenFromMaximized;
     private byte _originalAlpha = 255;
     private uint _originalFlags = Native.LWA_ALPHA, _originalColorKey;
+
     public ChatGPTTarget? Target => _target;
     public bool IsAttached => _target is { } t && Native.IsWindow(t.Hwnd);
     public bool ClickThrough { get; private set; }
     public bool TopMost { get; private set; }
     public bool Hidden { get; private set; }
     public double Opacity { get; private set; } = 1;
-    public WindowController(AppLogger log, RecoveryService recovery) { _log = log; _recovery = recovery; }
+
+    public WindowController(AppLogger log, RecoveryService recovery)
+    {
+        _log = log;
+        _recovery = recovery;
+    }
+
     public bool Attach(ChatGPTTarget target)
     {
         if (IsAttached && _target!.Hwnd == target.Hwnd) return true;
-        Restore(); _target = null; _journaled = false;
+        Restore();
+        _target = null;
+        _journaled = false;
         if (!Native.IsWindow(target.Hwnd)) return false;
-        _target = target; _originalExStyle = Native.GetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE);
-        _originalTopMost = (_originalExStyle.ToInt64() & Native.WS_EX_TOPMOST) != 0; _originalVisible = Native.IsWindowVisible(target.Hwnd);
+
+        _target = target;
+        _originalExStyle = Native.GetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE);
+        _originalTopMost = (_originalExStyle.ToInt64() & Native.WS_EX_TOPMOST) != 0;
+        _originalVisible = Native.IsWindowVisible(target.Hwnd);
         _originalLayered = (_originalExStyle.ToInt64() & Native.WS_EX_LAYERED) != 0;
-        if (_originalLayered && Native.GetLayeredWindowAttributes(target.Hwnd, out var key, out var alpha, out var flags)) { _originalColorKey = key; _originalAlpha = alpha; _originalFlags = flags; }
-        TopMost = _originalTopMost; Hidden = !_originalVisible; ClickThrough = (_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0; Opacity = _originalLayered ? _originalAlpha / 255d : 1;
-        _log.Info("Attached " + target.Summary); return true;
+        if (_originalLayered && Native.GetLayeredWindowAttributes(target.Hwnd, out var key, out var alpha, out var flags))
+        {
+            _originalColorKey = key;
+            _originalAlpha = alpha;
+            _originalFlags = flags;
+        }
+
+        TopMost = _originalTopMost;
+        Hidden = !_originalVisible;
+        ClickThrough = (_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
+        Opacity = _originalLayered ? _originalAlpha / 255d : 1;
+        _log.Info("Attached " + target.Summary);
+        return true;
     }
+
     public bool ToggleVisibility() => Mutate(() =>
     {
         if (!Hidden)
         {
-            _hiddenFromMinimized = Native.IsIconic(_target!.Hwnd); _hiddenFromMaximized = Native.IsZoomed(_target.Hwnd);
-            Native.ShowWindow(_target.Hwnd, Native.SW_HIDE); Hidden = true;
+            _hiddenFromMinimized = Native.IsIconic(_target!.Hwnd);
+            _hiddenFromMaximized = Native.IsZoomed(_target.Hwnd);
+            Native.ShowWindow(_target.Hwnd, Native.SW_HIDE);
+            if (Native.IsWindowVisible(_target.Hwnd)) return false;
+            Hidden = true;
+            return true;
         }
-        else
-        {
-            Native.ShowWindow(_target!.Hwnd, VisibilityRestorePolicy.Command(_hiddenFromMinimized, _hiddenFromMaximized)); Hidden = false;
-        }
-        return Native.IsWindowVisible(_target!.Hwnd) != Hidden;
+
+        Native.ShowWindow(_target!.Hwnd, VisibilityRestorePolicy.Command(_hiddenFromMinimized, _hiddenFromMaximized));
+        if (!Native.IsWindowVisible(_target.Hwnd)) return false;
+        Hidden = false;
+        return true;
     });
-    public bool ToggleClickThrough() => Mutate(() => { ClickThrough = !ClickThrough; ApplyVisuals(); return true; });
-    public bool ToggleTopMost() => Mutate(() => { TopMost = !TopMost; return Native.SetWindowPos(_target!.Hwnd, TopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED); });
+
+    public bool ToggleClickThrough() => Mutate(() =>
+    {
+        var requested = !ClickThrough;
+        if (!ApplyVisuals(requested, Opacity)) return false;
+        ClickThrough = requested;
+        return true;
+    });
+
+    public bool ToggleTopMost() => Mutate(() =>
+    {
+        var requested = !TopMost;
+        if (!Native.SetWindowPos(_target!.Hwnd, requested ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED))
+            return false;
+        if (Native.IsTopMost(_target.Hwnd) != requested) return false;
+        TopMost = requested;
+        return true;
+    });
+
     public bool AdjustOpacity(double delta) => SetOpacity(Opacity + delta);
-    public bool SetOpacity(double value) => Mutate(() => { Opacity = OpacityPolicy.Clamp(value); ApplyVisuals(); return true; });
+
+    public bool SetOpacity(double value) => Mutate(() =>
+    {
+        var requested = OpacityPolicy.Clamp(value);
+        if (!ApplyVisuals(ClickThrough, requested)) return false;
+        Opacity = requested;
+        return true;
+    });
+
     public bool EnsureInteractive(Action operation)
     {
         if (!IsAttached) return false;
-        if (!EnsureJournal()) return false;
         var prior = ClickThrough;
-        try { if (prior) { ClickThrough = false; ApplyVisuals(); } operation(); return true; }
-        finally { if (prior && IsAttached) { ClickThrough = true; ApplyVisuals(); } }
+
+        if (prior)
+        {
+            if (!EnsureJournal()) return false;
+            if (!ApplyVisuals(false, Opacity)) return false;
+            ClickThrough = false;
+        }
+
+        try
+        {
+            operation();
+            return true;
+        }
+        finally
+        {
+            if (prior && IsAttached)
+            {
+                if (!ApplyVisuals(true, Opacity))
+                {
+                    _log.Error("Failed to restore click-through after temporary interaction");
+                    ClickThrough = (Native.GetWindowLongPtr(_target!.Hwnd, Native.GWL_EXSTYLE).ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
+                }
+                else ClickThrough = true;
+            }
+        }
     }
+
     public bool Restore()
     {
-        if (!_journaled || _target is not { } t || !Native.IsWindow(t.Hwnd)) return true;
-        var result = _recovery.TryRecoverStaleState(); if (result) { _journaled = false; ClickThrough = false; Hidden = false; Opacity = 1; TopMost = false; }
-        return result;
+        if (!_journaled) return true;
+
+        var recovered = _recovery.TryRecoverStaleState();
+        var journalGone = !_recovery.HasPendingSnapshot;
+        if (!recovered && !journalGone) return false;
+
+        _journaled = false;
+        ClickThrough = (_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
+        Hidden = !_originalVisible;
+        Opacity = _originalLayered ? _originalAlpha / 255d : 1;
+        TopMost = _originalTopMost;
+        return true;
     }
+
     private bool Mutate(Func<bool> action)
     {
         if (!IsAttached) return false;
         if (!EnsureJournal()) return false;
-        try { return action(); } catch (Exception ex) { _log.Error("Window mutation failed: " + ex.GetType().Name); _recovery.TryRecoverStaleState(); _journaled = false; return false; }
+        try
+        {
+            var ok = action();
+            if (!ok) _log.Error("Window mutation was rejected or could not be verified");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Window mutation failed: " + ex.GetType().Name);
+            _recovery.TryRecoverStaleState();
+            _journaled = _recovery.HasPendingSnapshot;
+            return false;
+        }
     }
-    private void ApplyVisuals()
+
+    private bool ApplyVisuals(bool clickThrough, double opacity)
     {
-        var style = WindowStylePolicy.ComposeVisualStyle(_originalExStyle.ToInt64(), ClickThrough);
-        Native.SetWindowLongPtr(_target!.Hwnd, Native.GWL_EXSTYLE, new IntPtr(style));
-        Native.SetLayeredWindowAttributes(_target.Hwnd, 0, (byte)Math.Round(Opacity * 255), Native.LWA_ALPHA);
-        Native.SetWindowPos(_target.Hwnd, IntPtr.Zero, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
+        if (!IsAttached) return false;
+        var hwnd = _target!.Hwnd;
+        var style = WindowStylePolicy.ComposeVisualStyle(_originalExStyle.ToInt64(), clickThrough);
+        var alpha = (byte)Math.Round(OpacityPolicy.Clamp(opacity) * 255);
+
+        if (!Native.TrySetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(style))) return false;
+        if (!Native.SetLayeredWindowAttributes(hwnd, 0, alpha, Native.LWA_ALPHA)) return false;
+        if (!Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED))
+            return false;
+
+        var actualStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
+        var hasLayered = (actualStyle & Native.WS_EX_LAYERED) != 0;
+        var hasTransparent = (actualStyle & Native.WS_EX_TRANSPARENT) != 0;
+        if (!hasLayered || hasTransparent != clickThrough) return false;
+
+        if (!Native.GetLayeredWindowAttributes(hwnd, out _, out var actualAlpha, out var actualFlags)) return false;
+        return (actualFlags & Native.LWA_ALPHA) != 0 && Math.Abs(actualAlpha - alpha) <= 1;
     }
+
     private bool EnsureJournal()
     {
         if (_journaled) return true;
-        if (!_recovery.Save(_target!, _originalExStyle, _originalTopMost, _originalVisible, _originalLayered, _originalAlpha, _originalFlags, _originalColorKey)) { _log.Error("Refused window mutation: recovery journal unavailable."); return false; }
+        if (!_recovery.Save(_target!, _originalExStyle, _originalTopMost, _originalVisible, _originalLayered, _originalAlpha, _originalFlags, _originalColorKey))
+        {
+            _log.Error("Refused window mutation: recovery journal unavailable.");
+            return false;
+        }
         _journaled = true;
         return true;
     }
+
     public void Dispose() => Restore();
 }
