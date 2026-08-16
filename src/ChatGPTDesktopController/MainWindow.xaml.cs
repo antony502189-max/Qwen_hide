@@ -21,7 +21,7 @@ public partial class MainWindow : Window
             case 6: EnsureAttached(); await _paste.PasteImageAsync(_window.Target, _window); break;
             case 7: EnsureAttached(); RefreshDiagnostics(); Activate(); break;
             case 8: _capture = ScreenshotService.CaptureActiveWindowToClipboard(_window.Target?.Hwnd ?? IntPtr.Zero); _log.Info("F6: " + _capture.Detail); break;
-            case 9: EnsureAttached(); _voice.Probe(_window.Target); _voice.Invoke(_window.Target); break;
+            case 9: EnsureAttached(); _voice.Probe(_window.Target); _window.EnsureInteractive(() => _voice.Invoke(_window.Target)); break;
         }
         RefreshDiagnostics();
     });

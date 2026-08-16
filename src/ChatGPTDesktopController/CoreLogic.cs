@@ -27,3 +27,7 @@ public static class VoiceShortcutPolicy
 {
     public static bool CanInvoke(bool nativeShortcutDiscovered, string? shortcut) => nativeShortcutDiscovered && !string.IsNullOrWhiteSpace(shortcut);
 }
+public static class VoiceControlPolicy
+{
+    public static bool NameLooksLikeVoiceControl(string? name) => !string.IsNullOrWhiteSpace(name) && (name.Contains("voice", StringComparison.OrdinalIgnoreCase) || name.Contains("диктов", StringComparison.OrdinalIgnoreCase) || name.Contains("голос", StringComparison.OrdinalIgnoreCase));
+}

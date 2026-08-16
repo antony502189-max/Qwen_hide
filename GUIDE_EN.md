@@ -8,7 +8,7 @@ Hotkeys: `Ctrl+Alt+Q` hide/show; `Ctrl+Alt+X` click-through; `Ctrl+Alt+T` TopMos
 
 Paste intentionally fails with diagnostics if the ChatGPT composer is not exposed reliably through UI Automation. It never uses a coordinate click fallback. Hold no modifiers while it completes: the controller explicitly waits for Ctrl/Alt/V to be released before sending the paste.
 
-Voice and mixed audio are fail-closed. The current implementation does not guess an undocumented ChatGPT voice shortcut and does not alter Windows defaults or conference-app microphone selections. Run `scripts\probe-chatgpt-classic.ps1` while ChatGPT is open to record the available UI Automation controls before enabling a target-specific native shortcut.
+Voice does not guess an undocumented ChatGPT shortcut. On the observed target, the native shortcut was not exposed, so `Ctrl+Shift+R` invokes the real accessible voice control through UI Automation `InvokePattern` (not a coordinate click). Audio mixing remains fail-closed and does not alter Windows defaults or conference-app microphone selections.
 
 The recovery journal is only written immediately before the first window mutation. On normal exit, emergency exit, or next startup after a crash it restores original visibility, styles, topmost state, alpha/layering, and window placement.
 

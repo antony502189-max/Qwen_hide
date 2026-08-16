@@ -5,7 +5,8 @@ Target facts observed on this machine before implementation:
 - process name: ChatGPT Classic
 - application model: Electron/Chromium multiprocess
 - visible main HWND: Chrome_WidgetWin_1 (observed by the read-only probe)
-- UI Automation probe: no editable/document/button descendants were exposed from that HWND at probe time.
+- UI Automation probe: composer is Edit `prompt-textarea` (`Чат с ChatGPT`); voice controls include `Начало диктовки` and `Запустить голосовой режим`.
+- MSAA probe: the root is `ChatGPT Classic` with a generic client child; UI Automation is the useful accessibility surface.
 - unrelated Codex processes use ChatGPT.exe under OpenAI.Codex and are rejected.
 
 Qwen audit:
