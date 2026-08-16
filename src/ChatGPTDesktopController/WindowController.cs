@@ -197,7 +197,12 @@ public sealed class WindowController : IDisposable
     {
         if (!IsAttached) return false;
         var hwnd = _target!.Hwnd;
-        var style = WindowStylePolicy.ComposeVisualStyle(_originalExStyle.ToInt64(), clickThrough);
+
+        // Preserve the target's CURRENT extended style. In particular, TopMost can be
+        // toggled independently of opacity/click-through and must not be reset back to
+        // the style captured when the controller first attached.
+        var currentStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
+        var style = WindowStylePolicy.ComposeVisualStyle(currentStyle, clickThrough);
         var alpha = (byte)Math.Round(OpacityPolicy.Clamp(opacity) * 255);
 
         if (!Native.TrySetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(style))) return false;
@@ -209,7 +214,8 @@ public sealed class WindowController : IDisposable
         var actualStyle = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
         var hasLayered = (actualStyle & Native.WS_EX_LAYERED) != 0;
         var hasTransparent = (actualStyle & Native.WS_EX_TRANSPARENT) != 0;
-        if (!hasLayered || hasTransparent != clickThrough) return false;
+        var hasTopMost = (actualStyle & Native.WS_EX_TOPMOST) != 0;
+        if (!hasLayered || hasTransparent != clickThrough || hasTopMost != TopMost) return false;
 
         if (!Native.GetLayeredWindowAttributes(hwnd, out _, out var actualAlpha, out var actualFlags)) return false;
         return (actualFlags & Native.LWA_ALPHA) != 0 && Math.Abs(actualAlpha - alpha) <= 1;
