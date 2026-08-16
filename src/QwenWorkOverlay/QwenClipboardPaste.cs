@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using ThreadingTimer = System.Threading.Timer;
 
 namespace QwenWorkOverlay;
 
@@ -22,7 +23,7 @@ internal static class QwenClipboardPaste
     private const uint MouseLeftUp = 0x0004;
     private const uint KeyUp = 0x0002;
 
-    private static Timer? _timer;
+    private static ThreadingTimer? _timer;
     private static int _chordSeen;
     private static int _pasteRunning;
 
@@ -31,7 +32,7 @@ internal static class QwenClipboardPaste
     {
         // Polling avoids a second keyboard hook and therefore cannot disturb Ctrl+Alt+T/Q/X,
         // opacity hotkeys, Right Ctrl audio, or the existing RegisterHotKey dispatcher.
-        _timer = new Timer(Poll, null, 500, 25);
+        _timer = new ThreadingTimer(Poll, null, 500, 25);
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             try { _timer?.Dispose(); } catch { }
