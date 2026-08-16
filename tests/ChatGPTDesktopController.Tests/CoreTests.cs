@@ -114,11 +114,12 @@ public sealed class CoreTests
     [Fact]
     public void Window_style_computation_preserves_current_topmost_bit()
     {
-        const long currentTopMost = Native.WS_EX_TOPMOST | 0x100L;
+        const long wsExTopMost = 0x8L;
+        const long currentTopMost = wsExTopMost | 0x100L;
         var regular = WindowStylePolicy.ComposeVisualStyle(currentTopMost, false);
         var transparent = WindowStylePolicy.ComposeVisualStyle(currentTopMost, true);
-        Assert.NotEqual(0, regular & Native.WS_EX_TOPMOST);
-        Assert.NotEqual(0, transparent & Native.WS_EX_TOPMOST);
+        Assert.NotEqual(0, regular & wsExTopMost);
+        Assert.NotEqual(0, transparent & wsExTopMost);
     }
 
     [Fact]
