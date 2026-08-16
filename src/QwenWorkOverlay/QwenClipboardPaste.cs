@@ -1,7 +1,15 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace QwenWorkOverlay;
 
+// Target-machine workaround for Qwen 1.0.3 clipboard paste.
+//
+// IMPORTANT: this file does not register, unregister, suppress, or replace any existing hotkey.
+// GlobalHotkeys.cs remains untouched. We only observe the physical Ctrl+Alt+V chord with a cheap
+// timer and, after the keys are released, reproduce the exact path that was manually validated on
+// the target machine: activate Qwen -> real mouse click in composer -> real Ctrl+V -> restore mouse.
 internal static class QwenClipboardPaste
 {
     private const int VkControl = 0x11;
@@ -14,88 +22,165 @@ internal static class QwenClipboardPaste
     private const uint MouseLeftUp = 0x0004;
     private const uint KeyUp = 0x0002;
 
-    public static async Task<bool> PasteAsync(QwenWindowController qwen, AppLogger log)
+    private static Timer? _timer;
+    private static int _chordSeen;
+    private static int _pasteRunning;
+
+    [ModuleInitializer]
+    internal static void Initialize()
     {
-        if (!qwen.IsAttached || qwen.Target is null) return false;
-
-        // WM_HOTKEY is delivered while Ctrl/Alt/V can still be physically down.
-        // Wait here, inside paste only, so the stable global hotkey dispatcher stays untouched.
-        if (!await WaitForTriggerReleaseAsync())
+        // Polling avoids a second keyboard hook and therefore cannot disturb Ctrl+Alt+T/Q/X,
+        // opacity hotkeys, Right Ctrl audio, or the existing RegisterHotKey dispatcher.
+        _timer = new Timer(Poll, null, 500, 25);
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
-            log.Error("Ctrl+Alt+V paste cancelled: trigger keys did not release");
-            return false;
-        }
+            try { _timer?.Dispose(); } catch { }
+        };
+    }
 
-        var restoreClickThrough = qwen.ClickThrough;
-        if (restoreClickThrough && !qwen.SetClickThrough(false))
-        {
-            log.Error("Ctrl+Alt+V paste could not temporarily disable click-through");
-            return false;
-        }
-
+    private static void Poll(object? _)
+    {
         try
         {
-            if (!qwen.ShowAndActivate()) return false;
-            await Task.Delay(180);
-
-            var hwnd = qwen.Target?.Hwnd ?? IntPtr.Zero;
-            if (hwnd == IntPtr.Zero || !Native.IsWindow(hwnd) || !Native.GetWindowRect(hwnd, out var rect))
-                return false;
-
-            var width = rect.Right - rect.Left;
-            var height = rect.Bottom - rect.Top;
-            if (width < 320 || height < 240 || Native.IsMinimizedCoordinate(rect)) return false;
-
-            // Manual validation on this machine proved that a real mouse click in the Qwen
-            // composer followed by Ctrl+V pastes the F6 screenshot correctly. Reproduce exactly
-            // that input path. The cursor is restored immediately after the click.
-            var x = rect.Left + width / 2;
-            var bottomOffset = Math.Clamp((int)Math.Round(height * 0.095), 72, 108);
-            var y = rect.Bottom - bottomOffset;
-
-            if (!GetCursorPos(out var originalCursor)) return false;
-            try
+            var chordDown = IsDown(VkControl) && IsDown(VkMenu) && IsDown(VkV);
+            if (chordDown)
             {
-                if (!SetCursorPos(x, y)) return false;
-                await Task.Delay(35);
-                if (!SendMouseClick()) return false;
-                await Task.Delay(120);
-            }
-            finally
-            {
-                SetCursorPos(originalCursor.X, originalCursor.Y);
+                Interlocked.Exchange(ref _chordSeen, 1);
+                return;
             }
 
-            // A real click gives Chromium's composer the same focus as the user's successful
-            // manual test. Send a clean Ctrl+V only after the trigger modifiers are released.
-            if (IsDown(VkControl) || IsDown(VkMenu) || IsDown(VkV))
+            if (Interlocked.Exchange(ref _chordSeen, 0) == 1 &&
+                Interlocked.CompareExchange(ref _pasteRunning, 1, 0) == 0)
             {
-                if (!await WaitForTriggerReleaseAsync()) return false;
+                _ = Task.Run(PasteAfterReleaseAsync);
             }
-
-            var pasted = SendCtrlV();
-            if (!pasted) log.Error("Ctrl+Alt+V SendInput Ctrl+V failed; win32=" + Marshal.GetLastWin32Error());
-            return pasted;
         }
-        catch (Exception ex)
+        catch
         {
-            log.Error("Ctrl+Alt+V native paste failed: " + ex.GetType().Name);
-            return false;
-        }
-        finally
-        {
-            if (restoreClickThrough) qwen.SetClickThrough(true);
+            // Observation must never affect the controller.
         }
     }
 
-    private static async Task<bool> WaitForTriggerReleaseAsync()
+    private static async Task PasteAfterReleaseAsync()
     {
-        for (var i = 0; i < 150; i++)
+        try
         {
-            if (!IsDown(VkControl) && !IsDown(VkMenu) && !IsDown(VkV)) return true;
-            await Task.Delay(10);
+            // Let the original Ctrl+Alt+V handler finish its existing activation attempt first.
+            await Task.Delay(180);
+
+            var qwen = FindInstalledQwenWindow();
+            if (qwen == IntPtr.Zero) return;
+
+            Native.ShowWindowAsync(qwen, Native.SW_RESTORE);
+            Native.ShowWindowAsync(qwen, Native.SW_SHOW);
+            Native.SetForegroundWindow(qwen);
+            await Task.Delay(160);
+
+            if (!Native.GetWindowRect(qwen, out var rect)) return;
+            var width = rect.Right - rect.Left;
+            var height = rect.Bottom - rect.Top;
+            if (width < 320 || height < 240 || Native.IsMinimizedCoordinate(rect)) return;
+
+            // If controller click-through is enabled, temporarily clear only WS_EX_TRANSPARENT so
+            // the real click reaches Qwen. Restore the exact original extended style afterwards.
+            var originalExStyle = Native.GetWindowLongPtr(qwen, Native.GWL_EXSTYLE);
+            var hadClickThrough = (originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
+            if (hadClickThrough)
+            {
+                var withoutTransparent = originalExStyle.ToInt64() & ~Native.WS_EX_TRANSPARENT;
+                Native.SetWindowLongPtr(qwen, Native.GWL_EXSTYLE, new IntPtr(withoutTransparent));
+                Native.SetWindowPos(qwen, IntPtr.Zero, 0, 0, 0, 0,
+                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER |
+                    Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
+                await Task.Delay(40);
+            }
+
+            try
+            {
+                if (!GetCursorPos(out var originalCursor)) return;
+
+                // Qwen's composer occupies the lower central part of the native Chromium window.
+                // Center X avoids attachment/mic/send buttons on the edges.
+                var composerX = rect.Left + width / 2;
+                var composerBottomOffset = Math.Clamp((int)Math.Round(height * 0.095), 72, 108);
+                var composerY = rect.Bottom - composerBottomOffset;
+
+                try
+                {
+                    if (!SetCursorPos(composerX, composerY)) return;
+                    await Task.Delay(45);
+                    if (!SendMouseClick()) return;
+                    await Task.Delay(140);
+                }
+                finally
+                {
+                    SetCursorPos(originalCursor.X, originalCursor.Y);
+                }
+
+                // The trigger chord is already released here, so this is a clean Ctrl+V sequence.
+                SendCtrlV();
+            }
+            finally
+            {
+                if (hadClickThrough && Native.IsWindow(qwen))
+                {
+                    Native.SetWindowLongPtr(qwen, Native.GWL_EXSTYLE, originalExStyle);
+                    Native.SetWindowPos(qwen, IntPtr.Zero, 0, 0, 0, 0,
+                        Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER |
+                        Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
+                }
+            }
         }
-        return !IsDown(VkControl) && !IsDown(VkMenu) && !IsDown(VkV);
+        catch
+        {
+            // The old manual Ctrl+V path remains usable even if automation fails.
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _pasteRunning, 0);
+        }
+    }
+
+    private static IntPtr FindInstalledQwenWindow()
+    {
+        var expectedPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Programs", "Qwen", "Qwen.exe");
+
+        IntPtr best = IntPtr.Zero;
+        long bestArea = -1;
+
+        foreach (var process in Process.GetProcessesByName("Qwen"))
+        {
+            try
+            {
+                var path = process.MainModule?.FileName;
+                if (string.IsNullOrWhiteSpace(path) ||
+                    !string.Equals(Path.GetFullPath(path), Path.GetFullPath(expectedPath), StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                foreach (var hwnd in Native.EnumerateTopLevelWindows((uint)process.Id))
+                {
+                    if (!Native.IsWindow(hwnd)) continue;
+                    var area = Native.GetWindowArea(hwnd);
+                    if (area > bestArea)
+                    {
+                        bestArea = area;
+                        best = hwnd;
+                    }
+                }
+            }
+            catch
+            {
+                // Process may exit while enumerated.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
+        return best;
     }
 
     private static bool IsDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
