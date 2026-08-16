@@ -6,7 +6,7 @@ public sealed class WindowController : IDisposable
     private readonly RecoveryService _recovery;
     private ChatGPTTarget? _target;
     private IntPtr _originalExStyle;
-    private bool _originalTopMost, _originalVisible, _originalLayered, _journaled;
+    private bool _originalTopMost, _originalVisible, _originalLayered, _journaled, _hiddenFromMinimized, _hiddenFromMaximized;
     private byte _originalAlpha = 255;
     private uint _originalFlags = Native.LWA_ALPHA, _originalColorKey;
     public ChatGPTTarget? Target => _target;
@@ -28,7 +28,19 @@ public sealed class WindowController : IDisposable
         TopMost = _originalTopMost; Hidden = !_originalVisible; ClickThrough = (_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0; Opacity = _originalLayered ? _originalAlpha / 255d : 1;
         _log.Info("Attached " + target.Summary); return true;
     }
-    public bool ToggleVisibility() => Mutate(() => { Hidden = !Hidden; Native.ShowWindow(_target!.Hwnd, Hidden ? Native.SW_HIDE : Native.SW_RESTORE); return Native.IsWindowVisible(_target.Hwnd) != Hidden; });
+    public bool ToggleVisibility() => Mutate(() =>
+    {
+        if (!Hidden)
+        {
+            _hiddenFromMinimized = Native.IsIconic(_target!.Hwnd); _hiddenFromMaximized = Native.IsZoomed(_target.Hwnd);
+            Native.ShowWindow(_target.Hwnd, Native.SW_HIDE); Hidden = true;
+        }
+        else
+        {
+            Native.ShowWindow(_target!.Hwnd, VisibilityRestorePolicy.Command(_hiddenFromMinimized, _hiddenFromMaximized)); Hidden = false;
+        }
+        return Native.IsWindowVisible(_target!.Hwnd) != Hidden;
+    });
     public bool ToggleClickThrough() => Mutate(() => { ClickThrough = !ClickThrough; ApplyVisuals(); return true; });
     public bool ToggleTopMost() => Mutate(() => { TopMost = !TopMost; return Native.SetWindowPos(_target!.Hwnd, TopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED); });
     public bool AdjustOpacity(double delta) => SetOpacity(Opacity + delta);

@@ -20,6 +20,7 @@ public sealed class CoreTests
     [Fact] public void Target_validation_rejects_unrelated_processes() { Assert.False(ChatGPTProcessLocator.IsChatGPTClassicExecutable("C:\\Windows\\notepad.exe")); Assert.False(ChatGPTProcessLocator.IsChatGPTClassicExecutable(null)); }
     [Fact] public void Default_settings_are_conservative() { var s = new ControllerSettings(); Assert.Equal(1, s.Opacity); Assert.False(s.AutoLaunchTarget); Assert.False(s.RightCtrlAudioEnabled); }
     [Fact] public void Window_style_computation_preserves_base_style_and_adds_only_controller_bits() { const long original = 0x100L; var regular = WindowStylePolicy.ComposeVisualStyle(original, false); var transparent = WindowStylePolicy.ComposeVisualStyle(original, true); Assert.Equal(original | 0x80000L, regular); Assert.Equal(regular | 0x20L, transparent); }
+    [Fact] public void Hide_show_restores_the_original_minimize_or_maximize_mode() { Assert.Equal(2, VisibilityRestorePolicy.Command(true, false)); Assert.Equal(3, VisibilityRestorePolicy.Command(false, true)); Assert.Equal(5, VisibilityRestorePolicy.Command(false, false)); }
     [Fact] public void Stale_journal_for_nonexistent_window_is_removed_safely()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".json");

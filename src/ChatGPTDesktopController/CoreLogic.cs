@@ -9,6 +9,10 @@ public static class WindowStylePolicy
 {
     public static long ComposeVisualStyle(long originalStyle, bool clickThrough) => (originalStyle | Native.WS_EX_LAYERED) | (clickThrough ? Native.WS_EX_TRANSPARENT : 0);
 }
+public static class VisibilityRestorePolicy
+{
+    public static int Command(bool wasMinimized, bool wasMaximized) => wasMinimized ? Native.SW_SHOWMINIMIZED : wasMaximized ? Native.SW_SHOWMAXIMIZED : Native.SW_SHOW;
+}
 public sealed class RightCtrlStateMachine
 {
     public bool IsDown { get; private set; }
