@@ -31,7 +31,7 @@ public sealed class GlobalHotkeys : IDisposable
         Register(1, "Ctrl+Alt+Q hide/show", MOD_CONTROL|MOD_ALT, 0x51); Register(2, "Ctrl+Alt+X click-through", MOD_CONTROL|MOD_ALT, 0x58);
         Register(3, "Ctrl+Alt+T topmost", MOD_CONTROL|MOD_ALT, 0x54); Register(4, "Ctrl+Alt+Up opacity +", MOD_CONTROL|MOD_ALT, 0x26);
         Register(5, "Ctrl+Alt+Down opacity -", MOD_CONTROL|MOD_ALT, 0x28); Register(6, "Ctrl+Alt+V paste image", MOD_CONTROL|MOD_ALT, 0x56);
-        Register(7, "Ctrl+Alt+D diagnostics", MOD_CONTROL|MOD_ALT, 0x44); Register(8, "F6 capture active window", 0, 0x75);
+        Register(7, "Ctrl+Alt+D diagnostics", MOD_CONTROL|MOD_ALT, 0x44); Register(8, "F6 capture active monitor", 0, 0x75);
         Register(9, "Ctrl+Shift+R voice", MOD_CONTROL|MOD_SHIFT, 0x52);
         _keyboardProc = KeyboardHook; _keyboardHook = SetWindowsHookEx(13, _keyboardProc, GetModuleHandle(null), 0);
     }
