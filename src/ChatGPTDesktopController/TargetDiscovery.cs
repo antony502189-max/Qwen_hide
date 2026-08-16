@@ -16,11 +16,11 @@ public sealed class ChatGPTProcessLocator
     public ChatGPTTarget? FindRunningTarget()
     {
         var candidates = new List<ChatGPTTarget>();
-        foreach (var process in Process.GetProcesses())
+        foreach (var process in Process.GetProcessesByName("ChatGPT Classic"))
         {
             try
             {
-                if (process.Id == Environment.ProcessId || !process.ProcessName.Equals("ChatGPT Classic", StringComparison.OrdinalIgnoreCase)) continue;
+                if (process.Id == Environment.ProcessId) continue;
                 var path = TryPath(process);
                 if (!IsChatGPTClassicExecutable(path)) continue;
                 foreach (var hwnd in Native.TopLevelWindows((uint)process.Id))

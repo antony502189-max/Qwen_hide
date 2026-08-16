@@ -4,6 +4,8 @@
 2. Run `ChatGPTDesktopController.exe`.
 3. Use `Attach / refresh` if it was opened after the controller.
 
+The notification-area icon can restore the controller, open diagnostics, or exit safely. Settings can start the controller in that area and optionally open the verified installed ChatGPT Classic executable when no target is running. Reacquisition is a low-frequency five-second check and validates the executable path each time.
+
 Hotkeys: `Ctrl+Alt+Q` hide/show; `Ctrl+Alt+X` click-through; `Ctrl+Alt+T` TopMost; `Ctrl+Alt+Up/Down` opacity (35–100%); `F6` capture the active work window to the native Windows Clipboard; `Ctrl+Alt+V` restore/activate ChatGPT, focus the UI Automation composer, then send Ctrl+V; `Ctrl+Alt+D` diagnostics; `Ctrl+Alt+Esc` restore and quit.
 
 Paste intentionally fails with diagnostics if the ChatGPT composer is not exposed reliably through UI Automation. It never uses a coordinate click fallback. Hold no modifiers while it completes: the controller explicitly waits for Ctrl/Alt/V to be released before sending the paste.

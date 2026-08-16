@@ -7,6 +7,7 @@ Target facts observed on this machine before implementation:
 - visible main HWND: Chrome_WidgetWin_1 (observed by the read-only probe)
 - UI Automation probe: composer is Edit `prompt-textarea` (`Чат с ChatGPT`); voice controls include `Начало диктовки` and `Запустить голосовой режим`.
 - MSAA probe: the root is `ChatGPT Classic` with a generic client child; UI Automation is the useful accessibility surface.
+- installed app archive scan: no native voice shortcut/accelerator declaration was found; UIA `InvokePattern` is used as the non-coordinate fallback.
 - unrelated Codex processes use ChatGPT.exe under OpenAI.Codex and are rejected.
 
 Qwen audit:

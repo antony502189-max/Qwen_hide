@@ -67,7 +67,9 @@ public sealed class ComposerAutomation
     private static async Task WaitForHotkeyReleaseAsync()
     {
         var until = Stopwatch.GetTimestamp() + Stopwatch.Frequency; // at most one second, independent of normal hotkeys
-        while ((Native.IsKeyDown(0x11) || Native.IsKeyDown(0x12) || Native.IsKeyDown(0x56)) && Stopwatch.GetTimestamp() < until) await Task.Delay(10).ConfigureAwait(false);
+        // The caller is the WPF dispatcher. Preserve that STA context because Clipboard and UIA
+        // work below must not resume on a thread-pool thread after the modifier-release wait.
+        while ((Native.IsKeyDown(0x11) || Native.IsKeyDown(0x12) || Native.IsKeyDown(0x56)) && Stopwatch.GetTimestamp() < until) await Task.Delay(10);
     }
     private static void SendCtrlV()
     {

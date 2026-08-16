@@ -3,6 +3,6 @@
     <TextBlock Text="ChatGPT Classic Controller" FontSize="22" FontWeight="SemiBold"/>
     <TextBlock Grid.Row="1" x:Name="StatusText" Margin="0,8,0,12" TextWrapping="Wrap"/>
     <TextBox Grid.Row="2" x:Name="DetailsText" FontFamily="Consolas" FontSize="12" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
-    <WrapPanel Grid.Row="3" Margin="0,14,0,0"><Button Margin="0,0,8,0" Padding="12,6" Click="AttachClick">Attach / refresh</Button><Button Margin="0,0,8,0" Padding="12,6" Click="DiagnosticsClick">Diagnostics</Button><Button Margin="0,0,8,0" Padding="12,6" Click="RestoreClick">Restore</Button><Button Padding="12,6" Click="ExitClick">Exit safely</Button></WrapPanel>
+    <WrapPanel Grid.Row="3" Margin="0,14,0,0"><Button Margin="0,0,8,0" Padding="12,6" Click="AttachClick">Attach / refresh</Button><Button Margin="0,0,8,0" Padding="12,6" Click="DiagnosticsClick">Diagnostics</Button><Button Margin="0,0,8,0" Padding="12,6" Click="SettingsClick">Settings</Button><Button Margin="0,0,8,0" Padding="12,6" Click="RestoreClick">Restore</Button><Button Padding="12,6" Click="ExitClick">Exit safely</Button></WrapPanel>
   </Grid>
 </Window>

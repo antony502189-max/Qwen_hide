@@ -1,0 +1,10 @@
+<Window x:Class="ChatGPTDesktopController.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Controller settings" Width="510" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+  <Grid Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
+    <StackPanel Grid.Row="1" Margin="0,14,0,0"><CheckBox x:Name="StartInTray" Content="Start controller in the notification area"/><CheckBox x:Name="AutoLaunch" Margin="0,8,0,0" Content="Open ChatGPT Classic if it is not running"/><TextBlock Margin="0,12,0,3" Text="ChatGPT Classic executable override (normally leave blank)"/><TextBox x:Name="ExecutablePath"/>
+      <TextBlock Margin="0,12,0,3" Text="Voice hotkey"/><TextBox x:Name="VoiceHotkey" IsReadOnly="True"/>
+      <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="DimGray" Text="Audio mixing remains disabled until a safe dedicated virtual endpoint is implemented and explicitly configured. Windows default audio devices are never changed."/>
+    </StackPanel>
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0"><Button Padding="12,6" Margin="0,0,8,0" IsDefault="True" Click="SaveClick">Save</Button><Button Padding="12,6" IsCancel="True">Cancel</Button></StackPanel>
+  </Grid>
+</Window>
