@@ -1,0 +1,21 @@
+Release audit — ChatGPT Classic Controller
+
+Target facts observed on this machine before implementation:
+- executable: C:\Program Files\WindowsApps\OpenAI.ChatGPT-Desktop_1.2026.190.0_x64__2p2nqsd0c76g0\app\ChatGPT Classic.exe
+- process name: ChatGPT Classic
+- application model: Electron/Chromium multiprocess
+- visible main HWND: Chrome_WidgetWin_1 (observed by the read-only probe)
+- UI Automation probe: no editable/document/button descendants were exposed from that HWND at probe time.
+- unrelated Codex processes use ChatGPT.exe under OpenAI.Codex and are rejected.
+
+Qwen audit:
+- stable baseline retained for architecture: 75c60b2.
+- stable ideas ported: dedicated RegisterHotKey windows, independent emergency hotkey, journal-before-mutate window control, active-window clipboard capture, retrying Clipboard writes.
+- not ported: 75c60b2..5093afd Qwen Ctrl+Alt+V experiments; they were isolated later work and target-specific.
+- not ported: privacy-host/display-affinity claims or Qwen coordinate voice calibration.
+
+Safety boundaries:
+- no ChatGPT injection, binary modification, token/cookie/storage access, or conversation scraping.
+- no coordinate clicking is used for paste or voice.
+- audio remains disabled unless a dedicated endpoint configuration is supplied; global Windows defaults are never changed.
+- screen-share exclusion is unsupported.
