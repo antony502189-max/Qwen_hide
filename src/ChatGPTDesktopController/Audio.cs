@@ -51,7 +51,7 @@ public sealed class MixedAudioSession : IDisposable
 {
     private const int Rate = 48000, PumpSamples = 480, MaximumQueued = Rate / 2, TrimTo = Rate / 4;
     private readonly AudioDeviceService _devices; private readonly AppLogger _log; private readonly ConcurrentQueue<float> _micQueue = new(), _systemQueue = new(); private readonly object _gate = new();
-    private WasapiCapture? _mic; private WasapiLoopbackCapture? _loopback; private WasapiOut? _output; private BufferedWaveProvider? _provider; private System.Threading.Timer? _timer; private int _micCount, _systemCount, _generation, _pumping;
+    private WasapiCapture? _mic; private WasapiLoopbackCapture? _loopback; private WasapiOut? _output; private BufferedWaveProvider? _provider; private System.Threading.Timer? _timer; private int _micCount, _systemCount, _generation, _pumping, _faultStopQueued;
     public bool Running { get; private set; }
     public string Status { get; private set; } = "Idle";
     public string Microphone { get; private set; } = "Not configured";
@@ -73,7 +73,7 @@ public sealed class MixedAudioSession : IDisposable
                 _loopback = new WasapiLoopbackCapture(loopbackDevice); var loopFormat = _loopback.WaveFormat; _loopback.DataAvailable += (_, e) => { if (generation == _generation) Enqueue(_systemQueue, ref _systemCount, Convert(e.Buffer, e.BytesRecorded, loopFormat)); }; _loopback.StartRecording(); Loopback = "READY: " + loopbackDevice.FriendlyName;
                 _provider = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(Rate, 1)) { BufferDuration = TimeSpan.FromMilliseconds(750), DiscardOnBufferOverflow = true };
                 _output = new WasapiOut(virtualDevice, AudioClientShareMode.Shared, true, 40); _output.Init(_provider); _output.Play(); VirtualOutput = "READY: " + virtualDevice.FriendlyName;
-                _timer = new System.Threading.Timer(_ => Pump(settings.MicrophoneGain, settings.SystemAudioGain, generation), null, 0, 10); Running = true; Status = guard.Verify(_devices) ? "READY: mixed stream is sent only to the selected virtual output" : "STOPPED: Windows default audio device changed";
+                _faultStopQueued = 0; _timer = new System.Threading.Timer(_ => Pump(settings.MicrophoneGain, settings.SystemAudioGain, generation), null, 0, 10); Running = true; Status = guard.Verify(_devices) ? "READY: mixed stream is sent only to the selected virtual output" : "STOPPED: Windows default audio device changed";
                 if (!Status.StartsWith("READY", StringComparison.Ordinal)) StopCore();
             }
             catch (Exception ex) { Status = "Unavailable: " + ex.GetType().Name; _log.Error("Audio mix startup failed: " + ex.GetType().Name); StopCore(); }
@@ -89,12 +89,23 @@ public sealed class MixedAudioSession : IDisposable
             for (var i = 0; i < data.Length; i++) data[i] = MathF.Tanh((float)(mic[i] * Math.Clamp(micGain, 0, 4) + system[i] * Math.Clamp(systemGain, 0, 4)));
             var bytes = new byte[data.Length * sizeof(float)]; Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length); provider.AddSamples(bytes, 0, bytes.Length);
         }
-        catch (Exception ex) { Status = "Stopped: " + ex.GetType().Name; _log.Error("Audio pump failed: " + ex.GetType().Name); }
+        catch (Exception ex)
+        {
+            Status = "Stopped: " + ex.GetType().Name; _log.Error("Audio pump failed: " + ex.GetType().Name);
+            if (Interlocked.Exchange(ref _faultStopQueued, 1) == 0) ThreadPool.UnsafeQueueUserWorkItem(_ => StopAfterPumpFailure(generation), null);
+        }
         finally { Volatile.Write(ref _pumping, 0); }
+    }
+    private void StopAfterPumpFailure(int generation)
+    {
+        lock (_gate)
+        {
+            if (generation == _generation) StopCore();
+        }
     }
     private void StopCore()
     {
-        ++_generation; try { _timer?.Dispose(); _mic?.StopRecording(); _loopback?.StopRecording(); _output?.Stop(); } catch { } _timer?.Dispose(); _mic?.Dispose(); _loopback?.Dispose(); _output?.Dispose(); _timer = null; _mic = null; _loopback = null; _output = null; _provider = null; _micQueue.Clear(); _systemQueue.Clear(); _micCount = _systemCount = 0; Running = false;
+        ++_generation; try { _timer?.Dispose(); _mic?.StopRecording(); _loopback?.StopRecording(); _output?.Stop(); } catch { } _timer?.Dispose(); _mic?.Dispose(); _loopback?.Dispose(); _output?.Dispose(); _timer = null; _mic = null; _loopback = null; _output = null; _provider = null; _micQueue.Clear(); _systemQueue.Clear(); _micCount = _systemCount = 0; _faultStopQueued = 0; Running = false;
     }
     private static void Enqueue(ConcurrentQueue<float> queue, ref int count, float[] values) { Interlocked.Add(ref count, values.Length); foreach (var value in values) queue.Enqueue(value); Trim(queue, ref count); }
     private static void Trim(ConcurrentQueue<float> queue, ref int count) { while (Volatile.Read(ref count) > MaximumQueued && queue.TryDequeue(out _)) Interlocked.Decrement(ref count); while (Volatile.Read(ref count) > TrimTo && queue.TryDequeue(out _)) Interlocked.Decrement(ref count); }
