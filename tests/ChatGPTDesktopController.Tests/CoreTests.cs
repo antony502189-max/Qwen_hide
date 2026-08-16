@@ -112,6 +112,16 @@ public sealed class CoreTests
     }
 
     [Fact]
+    public void Window_style_computation_preserves_current_topmost_bit()
+    {
+        const long currentTopMost = Native.WS_EX_TOPMOST | 0x100L;
+        var regular = WindowStylePolicy.ComposeVisualStyle(currentTopMost, false);
+        var transparent = WindowStylePolicy.ComposeVisualStyle(currentTopMost, true);
+        Assert.NotEqual(0, regular & Native.WS_EX_TOPMOST);
+        Assert.NotEqual(0, transparent & Native.WS_EX_TOPMOST);
+    }
+
+    [Fact]
     public void Interactive_style_can_remove_preexisting_transparent_bit()
     {
         const long originalWithTransparent = 0x100L | 0x20L;
