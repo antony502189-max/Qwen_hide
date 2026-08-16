@@ -4,11 +4,13 @@ public sealed class WindowController : IDisposable
 {
     private readonly AppLogger _log;
     private readonly RecoveryService _recovery;
+    private readonly object _stateGate = new();
     private ChatGPTTarget? _target;
     private IntPtr _originalExStyle;
     private bool _originalTopMost, _originalVisible, _originalLayered, _journaled, _hiddenFromMinimized, _hiddenFromMaximized;
     private byte _originalAlpha = 255;
     private uint _originalFlags = Native.LWA_ALPHA, _originalColorKey;
+    private int _interactionEpoch;
 
     public ChatGPTTarget? Target => _target;
     public bool IsAttached => _target is { } t && Native.IsWindow(t.Hwnd);
@@ -25,30 +27,30 @@ public sealed class WindowController : IDisposable
 
     public bool Attach(ChatGPTTarget target)
     {
-        if (IsAttached && _target!.Hwnd == target.Hwnd) return true;
-        Restore();
-        _target = null;
-        _journaled = false;
-        if (!Native.IsWindow(target.Hwnd)) return false;
-
-        _target = target;
-        _originalExStyle = Native.GetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE);
-        _originalTopMost = (_originalExStyle.ToInt64() & Native.WS_EX_TOPMOST) != 0;
-        _originalVisible = Native.IsWindowVisible(target.Hwnd);
-        _originalLayered = (_originalExStyle.ToInt64() & Native.WS_EX_LAYERED) != 0;
-        if (_originalLayered && Native.GetLayeredWindowAttributes(target.Hwnd, out var key, out var alpha, out var flags))
+        lock (_stateGate)
         {
-            _originalColorKey = key;
-            _originalAlpha = alpha;
-            _originalFlags = flags;
-        }
+            if (IsAttached && _target!.Hwnd == target.Hwnd) return true;
+            RestoreLocked();
+            _target = null;
+            _journaled = false;
+            if (!Native.IsWindow(target.Hwnd)) return false;
 
-        TopMost = _originalTopMost;
-        Hidden = !_originalVisible;
-        ClickThrough = (_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
-        Opacity = _originalLayered ? _originalAlpha / 255d : 1;
-        _log.Info("Attached " + target.Summary);
-        return true;
+            _target = target;
+            _originalExStyle = Native.GetWindowLongPtr(target.Hwnd, Native.GWL_EXSTYLE);
+            _originalTopMost = (_originalExStyle.ToInt64() & Native.WS_EX_TOPMOST) != 0;
+            _originalVisible = Native.IsWindowVisible(target.Hwnd);
+            _originalLayered = (_originalExStyle.ToInt64() & Native.WS_EX_LAYERED) != 0;
+            if (_originalLayered && Native.GetLayeredWindowAttributes(target.Hwnd, out var key, out var alpha, out var flags))
+            {
+                _originalColorKey = key;
+                _originalAlpha = alpha;
+                _originalFlags = flags;
+            }
+
+            ResetLogicalToOriginal();
+            _log.Info("Attached " + target.Summary);
+            return true;
+        }
     }
 
     public bool ToggleVisibility() => Mutate(() =>
@@ -100,14 +102,23 @@ public sealed class WindowController : IDisposable
 
     public bool EnsureInteractive(Action operation)
     {
-        if (!IsAttached) return false;
-        var prior = ClickThrough;
-
-        if (prior)
+        bool prior;
+        int epoch;
+        lock (_stateGate)
         {
-            if (!EnsureJournal()) return false;
-            if (!ApplyVisuals(false, Opacity)) return false;
-            ClickThrough = false;
+            if (!IsAttached) return false;
+            prior = ClickThrough;
+            if (prior)
+            {
+                if (!EnsureJournal()) return false;
+                if (!ApplyVisuals(false, Opacity))
+                {
+                    RecoverAfterFailedMutation("temporary interactive transition");
+                    return false;
+                }
+                ClickThrough = false;
+            }
+            epoch = _interactionEpoch;
         }
 
         try
@@ -117,20 +128,29 @@ public sealed class WindowController : IDisposable
         }
         finally
         {
-            if (prior && IsAttached)
+            lock (_stateGate)
             {
-                if (!ApplyVisuals(true, Opacity))
+                if (prior && epoch == _interactionEpoch && IsAttached)
                 {
-                    _log.Error("Failed to restore click-through after temporary interaction");
-                    ClickThrough = (Native.GetWindowLongPtr(_target!.Hwnd, Native.GWL_EXSTYLE).ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
+                    if (!ApplyVisuals(true, Opacity))
+                    {
+                        _log.Error("Failed to restore click-through after temporary interaction");
+                        RecoverAfterFailedMutation("temporary interaction restore");
+                    }
+                    else ClickThrough = true;
                 }
-                else ClickThrough = true;
             }
         }
     }
 
     public bool Restore()
     {
+        lock (_stateGate) return RestoreLocked();
+    }
+
+    private bool RestoreLocked()
+    {
+        _interactionEpoch++;
         if (!_journaled) return true;
 
         var recovered = _recovery.TryRecoverStaleState();
@@ -138,30 +158,39 @@ public sealed class WindowController : IDisposable
         if (!recovered && !journalGone) return false;
 
         _journaled = false;
-        ClickThrough = (_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
-        Hidden = !_originalVisible;
-        Opacity = _originalLayered ? _originalAlpha / 255d : 1;
-        TopMost = _originalTopMost;
+        ResetLogicalToOriginal();
         return true;
     }
 
     private bool Mutate(Func<bool> action)
     {
-        if (!IsAttached) return false;
-        if (!EnsureJournal()) return false;
-        try
+        lock (_stateGate)
         {
-            var ok = action();
-            if (!ok) _log.Error("Window mutation was rejected or could not be verified");
-            return ok;
+            if (!IsAttached) return false;
+            if (!EnsureJournal()) return false;
+            try
+            {
+                var ok = action();
+                if (!ok) RecoverAfterFailedMutation("window mutation verification");
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Window mutation failed: " + ex.GetType().Name);
+                RecoverAfterFailedMutation("window mutation exception");
+                return false;
+            }
         }
-        catch (Exception ex)
-        {
-            _log.Error("Window mutation failed: " + ex.GetType().Name);
-            _recovery.TryRecoverStaleState();
-            _journaled = _recovery.HasPendingSnapshot;
-            return false;
-        }
+    }
+
+    private void RecoverAfterFailedMutation(string context)
+    {
+        _log.Error(context + " failed; restoring original target state");
+        var recovered = _recovery.TryRecoverStaleState();
+        var journalGone = !_recovery.HasPendingSnapshot;
+        _journaled = !journalGone;
+        if (recovered || journalGone) ResetLogicalToOriginal();
+        else SyncLogicalFromNative();
     }
 
     private bool ApplyVisuals(bool clickThrough, double opacity)
@@ -196,6 +225,26 @@ public sealed class WindowController : IDisposable
         }
         _journaled = true;
         return true;
+    }
+
+    private void ResetLogicalToOriginal()
+    {
+        ClickThrough = (_originalExStyle.ToInt64() & Native.WS_EX_TRANSPARENT) != 0;
+        Hidden = !_originalVisible;
+        Opacity = _originalLayered ? _originalAlpha / 255d : 1;
+        TopMost = _originalTopMost;
+    }
+
+    private void SyncLogicalFromNative()
+    {
+        if (!IsAttached) return;
+        var hwnd = _target!.Hwnd;
+        var style = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
+        ClickThrough = (style & Native.WS_EX_TRANSPARENT) != 0;
+        TopMost = (style & Native.WS_EX_TOPMOST) != 0;
+        Hidden = !Native.IsWindowVisible(hwnd);
+        if ((style & Native.WS_EX_LAYERED) != 0 && Native.GetLayeredWindowAttributes(hwnd, out _, out var alpha, out var flags) && (flags & Native.LWA_ALPHA) != 0)
+            Opacity = alpha / 255d;
     }
 
     public void Dispose() => Restore();

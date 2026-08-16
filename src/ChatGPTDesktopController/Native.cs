@@ -76,6 +76,37 @@ internal static class Native
         return previous != IntPtr.Zero || Marshal.GetLastPInvokeError() == 0;
     }
 
+    public static bool TryActivateWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero || !IsWindow(hwnd)) return false;
+        if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+
+        var foreground = GetForegroundWindow();
+        var sourceThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, IntPtr.Zero);
+        var targetThread = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+        var currentThread = GetCurrentThreadId();
+        var sourceAttached = false;
+        var targetAttached = false;
+
+        try
+        {
+            if (sourceThread != 0 && sourceThread != currentThread)
+                sourceAttached = AttachThreadInput(currentThread, sourceThread, true);
+            if (targetThread != 0 && targetThread != currentThread)
+                targetAttached = AttachThreadInput(currentThread, targetThread, true);
+
+            BringWindowToTop(hwnd);
+            SetForegroundWindow(hwnd);
+            var actual = GetForegroundWindow();
+            return actual == hwnd || (actual != IntPtr.Zero && GetAncestor(actual, GA_ROOT) == hwnd);
+        }
+        finally
+        {
+            if (targetAttached) AttachThreadInput(currentThread, targetThread, false);
+            if (sourceAttached) AttachThreadInput(currentThread, sourceThread, false);
+        }
+    }
+
     public static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
     public static bool IsTopMost(IntPtr hwnd) => (GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) != 0;
 }

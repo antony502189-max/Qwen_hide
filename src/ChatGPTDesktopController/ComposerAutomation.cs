@@ -34,8 +34,8 @@ public sealed class ComposerAutomation
 
     private PasteResult FocusAndPaste(ChatGPTTarget target)
     {
-        if (Native.IsIconic(target.Hwnd)) Native.ShowWindow(target.Hwnd, Native.SW_RESTORE);
-        if (!Activate(target.Hwnd)) return Fail("Win32 activation", "Could not activate ChatGPT Classic");
+        if (!Native.TryActivateWindow(target.Hwnd))
+            return Fail("Win32 activation", "Could not activate ChatGPT Classic");
         Set(PasteStage.Activated, "Win32 activation", "Target foreground handoff completed");
 
         if (!TryFocusComposer(target.Hwnd, out var method, out var why))
@@ -53,33 +53,6 @@ public sealed class ComposerAutomation
         Thread.Sleep(120);
         Set(PasteStage.Completed, method, "Paste input dispatched successfully; ChatGPT owns attachment rendering");
         return LastResult;
-    }
-
-    private static bool Activate(IntPtr hwnd)
-    {
-        var foreground = Native.GetForegroundWindow();
-        var sourceThread = foreground == IntPtr.Zero ? 0 : Native.GetWindowThreadProcessId(foreground, IntPtr.Zero);
-        var targetThread = Native.GetWindowThreadProcessId(hwnd, IntPtr.Zero);
-        var current = Native.GetCurrentThreadId();
-        var sourceAttached = false;
-        var targetAttached = false;
-
-        try
-        {
-            if (sourceThread != 0 && sourceThread != current)
-                sourceAttached = Native.AttachThreadInput(current, sourceThread, true);
-            if (targetThread != 0 && targetThread != current)
-                targetAttached = Native.AttachThreadInput(current, targetThread, true);
-
-            Native.BringWindowToTop(hwnd);
-            if (!Native.SetForegroundWindow(hwnd)) return false;
-            return Native.GetForegroundWindow() == hwnd || Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT) == hwnd;
-        }
-        finally
-        {
-            if (targetAttached) Native.AttachThreadInput(current, targetThread, false);
-            if (sourceAttached) Native.AttachThreadInput(current, sourceThread, false);
-        }
     }
 
     private static bool TryFocusComposer(IntPtr hwnd, out string method, out string detail)

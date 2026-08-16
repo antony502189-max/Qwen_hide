@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private AudioDeviceService? _audioDevices;
     private MixedAudioSession? _audio;
     private ScreenshotResult _capture = new(false, "Not run", DateTimeOffset.MinValue);
+    private int _shutdownStarted;
 
     public MainWindow(AppLogger log)
     {
@@ -33,6 +34,7 @@ public partial class MainWindow : Window
 
     private void HandleHotkey(int id) => Dispatcher.BeginInvoke(async () =>
     {
+        if (Volatile.Read(ref _shutdownStarted) != 0) return;
         try
         {
             switch (id)
@@ -44,25 +46,31 @@ public partial class MainWindow : Window
                 case 5: EnsureAttached(); _window.AdjustOpacity(-.05); break;
                 case 6: EnsureAttached(); await _paste.PasteImageAsync(_window.Target, _window); break;
                 case 7: EnsureAttached(); _voice.Probe(_window.Target); ShowController(); break;
-                case 8: _capture = ScreenshotService.CaptureActiveWindowToClipboard(_window.Target?.Hwnd ?? IntPtr.Zero); _log.Info("F6: " + _capture.Detail); break;
+                case 8: _capture = ScreenshotService.CaptureActiveMonitorToClipboard(_window.Target?.Hwnd ?? IntPtr.Zero); _log.Info("F6: " + _capture.Detail); break;
                 case 9: EnsureAttached(); _voice.Probe(_window.Target); _window.EnsureInteractive(() => _voice.Invoke(_window.Target)); break;
             }
         }
         catch (Exception ex) { _log.Error($"Hotkey {id} failed: {ex.GetType().Name}"); }
-        finally { RefreshDiagnostics(); }
+        finally { if (Volatile.Read(ref _shutdownStarted) == 0) RefreshDiagnostics(); }
     });
 
-    private void Attach() { var target = _locator.FindRunningTarget(); if (target is not null) _window.Attach(target); else _log.Info("ChatGPT Classic target not running."); }
-    private void ReacquireIfNeeded() { if (_window.IsAttached) return; Attach(); TryAutoLaunch(); RefreshDiagnostics(); }
-    private void TryAutoLaunch() { if (_window.IsAttached || !_settings.AutoLaunchTarget) return; var path = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (path is not null) _locator.TryLaunch(path); }
+    private void Attach() { if (Volatile.Read(ref _shutdownStarted) != 0) return; var target = _locator.FindRunningTarget(); if (target is not null) _window.Attach(target); else _log.Info("ChatGPT Classic target not running."); }
+    private void ReacquireIfNeeded() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached) return; Attach(); TryAutoLaunch(); RefreshDiagnostics(); }
+    private void TryAutoLaunch() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached || !_settings.AutoLaunchTarget) return; var path = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (path is not null) _locator.TryLaunch(path); }
     private void EnsureAttached() { if (!_window.IsAttached) Attach(); }
     private void RightCtrlChanged(bool down)
     {
-        if (!_settings.RightCtrlAudioEnabled) return;
-        Task.Run(() => { lock (_audioGate) { if (down) GetOrCreateAudio().Start(_settings); else _audio?.Stop(); } }).ContinueWith(_ => Dispatcher.BeginInvoke(RefreshDiagnostics));
+        if (Volatile.Read(ref _shutdownStarted) != 0 || !_settings.RightCtrlAudioEnabled) return;
+        Task.Run(() => { lock (_audioGate) { if (down) GetOrCreateAudio().Start(_settings); else _audio?.Stop(); } }).ContinueWith(_ => { if (Volatile.Read(ref _shutdownStarted) == 0) Dispatcher.BeginInvoke(RefreshDiagnostics); });
     }
     private MixedAudioSession GetOrCreateAudio() => _audio ??= new MixedAudioSession(_audioDevices ??= new AudioDeviceService(), _log);
-    private void Emergency() { _window.Restore(); lock (_audioGate) _audio?.Stop(); Dispatcher.BeginInvoke(Close); }
+    private void Emergency()
+    {
+        if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0) return;
+        _window.Restore();
+        lock (_audioGate) _audio?.Stop();
+        Dispatcher.BeginInvoke(Close);
+    }
 
     private void RefreshDiagnostics()
     {
@@ -85,6 +93,6 @@ public partial class MainWindow : Window
     private void ExitClick(object sender, RoutedEventArgs e) => ExitSafely();
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); RefreshDiagnostics(); ShowController(); }
-    private void ExitSafely() => Close();
-    protected override void OnClosed(EventArgs e) { _reacquireTimer.Stop(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
+    private void ExitSafely() { Interlocked.Exchange(ref _shutdownStarted, 1); Close(); }
+    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
 }

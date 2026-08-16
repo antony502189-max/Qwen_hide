@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-test:
+  build-test-package:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,11 +19,23 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore
-        run: dotnet restore ChatGPTDesktopController.sln
+      - name: Full build, tests and packaging
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
 
-      - name: Build
-        run: dotnet build ChatGPTDesktopController.sln -c Release --no-restore
+      - name: Verify packaged executable
+        shell: powershell
+        run: |
+          if (-not (Test-Path .\dist-single\ChatGPTDesktopController.exe)) { throw 'Missing packaged executable' }
+          if (-not (Test-Path .\dist-single\SHA256SUMS.txt)) { throw 'Missing SHA256SUMS.txt' }
+          Get-Item .\dist-single\ChatGPTDesktopController.exe | Format-List Name,Length,LastWriteTime
+          Get-Content .\dist-single\SHA256SUMS.txt
 
-      - name: Test
-        run: dotnet test ChatGPTDesktopController.sln -c Release --no-build --logger "console;verbosity=normal"
+      - name: Upload packaged controller
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatGPTDesktopController-win-x64
+          path: |
+            dist-single/ChatGPTDesktopController.exe
+            dist-single/SHA256SUMS.txt
+          if-no-files-found: error

@@ -29,11 +29,7 @@ public sealed class VoiceAutomation
                 return;
             }
 
-            Status = new(
-                false,
-                "No native shortcut; UIA control: " + selected.Name,
-                "Ready: deterministic accessible voice action selected",
-                "UI Automation InvokePattern; no coordinates");
+            Status = new(false, "No native shortcut; UIA control: " + selected.Name, "Ready: deterministic accessible voice action selected", "UI Automation InvokePattern; no coordinates");
         }
         catch (Exception ex)
         {
@@ -51,8 +47,11 @@ public sealed class VoiceAutomation
 
         try
         {
-            if (Native.IsIconic(target.Hwnd)) Native.ShowWindow(target.Hwnd, Native.SW_RESTORE);
-            Native.SetForegroundWindow(target.Hwnd);
+            if (!Native.TryActivateWindow(target.Hwnd))
+            {
+                Status = Status with { LastInvocation = "Skipped: ChatGPT could not be activated", FallbackState = "No coordinate fallback is used" };
+                return;
+            }
 
             var controls = FindVoiceControls(target.Hwnd);
             var selected = controls.OrderByDescending(x => VoiceControlPolicy.Score(x.Name)).FirstOrDefault();
@@ -62,19 +61,14 @@ public sealed class VoiceAutomation
                 return;
             }
 
-            var element = selected.Element;
-            if (!element.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern))
+            if (!selected.Element.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern))
             {
                 Status = Status with { LastInvocation = "Skipped: selected voice control has no InvokePattern: " + selected.Name, FallbackState = "No coordinate fallback is used" };
                 return;
             }
 
             ((InvokePattern)pattern).Invoke();
-            Status = new(
-                false,
-                "No native shortcut; UIA control: " + selected.Name,
-                "UI Automation invoked: " + selected.Name,
-                "Accessible InvokePattern; no coordinates");
+            Status = new(false, "No native shortcut; UIA control: " + selected.Name, "UI Automation invoked: " + selected.Name, "Accessible InvokePattern; no coordinates");
         }
         catch (Exception ex)
         {
@@ -87,11 +81,9 @@ public sealed class VoiceAutomation
     private static List<VoiceControlCandidate> FindVoiceControls(IntPtr hwnd)
     {
         var root = AutomationElement.FromHandle(hwnd);
-        var buttons = root.FindAll(
-            TreeScope.Descendants,
-            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
-
+        var buttons = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
         var result = new List<VoiceControlCandidate>();
+
         foreach (AutomationElement element in buttons)
         {
             try
@@ -103,6 +95,7 @@ public sealed class VoiceAutomation
             }
             catch (ElementNotAvailableException) { }
         }
+
         return result;
     }
 
