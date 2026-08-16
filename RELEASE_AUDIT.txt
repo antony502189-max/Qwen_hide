@@ -19,5 +19,6 @@ Qwen audit:
 Safety boundaries:
 - no ChatGPT injection, binary modification, token/cookie/storage access, or conversation scraping.
 - no coordinate clicking is used for paste or voice.
-- audio remains disabled unless a dedicated endpoint configuration is supplied; global Windows defaults are never changed.
+- audio endpoints observed: only physical Realtek/Bluetooth endpoints; no recognized virtual output exists. Right Ctrl therefore safely refuses to start until one is selected.
+- the mixer captures physical mic + selected system loopback and renders only to a recognized, non-default virtual output; global defaults are never changed.
 - screen-share exclusion is unsupported.

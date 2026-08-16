@@ -5,12 +5,12 @@ namespace ChatGPTDesktopController;
 
 public partial class MainWindow : Window
 {
-    private readonly AppLogger _log; private readonly ChatGPTProcessLocator _locator; private readonly RecoveryService _recovery; private readonly WindowController _window; private readonly ComposerAutomation _paste; private readonly VoiceAutomation _voice; private readonly GlobalHotkeys _hotkeys; private readonly EmergencyHotkey _emergency; private readonly TrayController _tray; private readonly ControllerSettings _settings; private readonly System.Windows.Threading.DispatcherTimer _reacquireTimer;
+    private readonly AppLogger _log; private readonly ChatGPTProcessLocator _locator; private readonly RecoveryService _recovery; private readonly WindowController _window; private readonly ComposerAutomation _paste; private readonly VoiceAutomation _voice; private readonly GlobalHotkeys _hotkeys; private readonly EmergencyHotkey _emergency; private readonly TrayController _tray; private readonly ControllerSettings _settings; private readonly System.Windows.Threading.DispatcherTimer _reacquireTimer; private readonly object _audioGate = new(); private AudioDeviceService? _audioDevices; private MixedAudioSession? _audio;
     private ScreenshotResult _capture = new(false, "Not run", DateTimeOffset.MinValue);
     public MainWindow(AppLogger log)
     {
         InitializeComponent(); _log = log; _settings = SettingsService.Load(); _locator = new(log); _recovery = new(log); _window = new(log, _recovery); _paste = new(log); _voice = new(log);
-        _hotkeys = new GlobalHotkeys(HandleHotkey); _emergency = new EmergencyHotkey(Emergency); _tray = new TrayController(ShowController, RefreshAndShowDiagnostics, ExitSafely);
+        _hotkeys = new GlobalHotkeys(HandleHotkey); _hotkeys.RightCtrlChanged += RightCtrlChanged; _emergency = new EmergencyHotkey(Emergency); _tray = new TrayController(ShowController, RefreshAndShowDiagnostics, ExitSafely);
         Attach(); TryAutoLaunch(); RefreshDiagnostics();
         _reacquireTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) }; _reacquireTimer.Tick += (_, _) => { if (!_window.IsAttached) { Attach(); RefreshDiagnostics(); } }; _reacquireTimer.Start();
         Loaded += (_, _) => { if (_settings.StartInTray) Hide(); };
@@ -31,6 +31,12 @@ public partial class MainWindow : Window
     private void Attach() { var target = _locator.FindRunningTarget(); if (target is not null) _window.Attach(target); else _log.Info("ChatGPT Classic target not running."); }
     private void TryAutoLaunch() { if (_window.IsAttached || !_settings.AutoLaunchTarget) return; var executable = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (executable is not null) _locator.TryLaunch(executable); }
     private void EnsureAttached() { if (!_window.IsAttached) Attach(); }
+    private void RightCtrlChanged(bool down)
+    {
+        if (!_settings.RightCtrlAudioEnabled) return;
+        Task.Run(() => { lock (_audioGate) { if (down) GetOrCreateAudio().Start(_settings); else _audio?.Stop(); } }).ContinueWith(_ => Dispatcher.BeginInvoke(RefreshDiagnostics));
+    }
+    private MixedAudioSession GetOrCreateAudio() => _audio ??= new MixedAudioSession(_audioDevices ??= new AudioDeviceService(), _log);
     private void Emergency() { _window.Restore(); Dispatcher.BeginInvoke(Close); }
     private void RefreshDiagnostics()
     {
@@ -40,11 +46,11 @@ public partial class MainWindow : Window
     }
     private void AttachClick(object sender, RoutedEventArgs e) { Attach(); RefreshDiagnostics(); }
     private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); RefreshDiagnostics(); }
-    private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings) { Owner = this }; if (dialog.ShowDialog() == true) { TryAutoLaunch(); RefreshDiagnostics(); } }
+    private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings, _audioDevices ??= new AudioDeviceService()) { Owner = this }; if (dialog.ShowDialog() == true) { TryAutoLaunch(); RefreshDiagnostics(); } }
     private void RestoreClick(object sender, RoutedEventArgs e) { _window.Restore(); RefreshDiagnostics(); }
     private void ExitClick(object sender, RoutedEventArgs e) => ExitSafely();
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); RefreshDiagnostics(); ShowController(); }
     private void ExitSafely() => Close();
-    protected override void OnClosed(EventArgs e) { _reacquireTimer.Stop(); _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { _reacquireTimer.Stop(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
 }

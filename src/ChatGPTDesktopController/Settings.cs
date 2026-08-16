@@ -11,6 +11,7 @@ public sealed class ControllerSettings
     public string VoiceHotkey { get; set; } = "Ctrl+Shift+R";
     public bool RightCtrlAudioEnabled { get; set; }
     public string? PhysicalMicrophoneId { get; set; }
+    public string? LoopbackDeviceId { get; set; }
     public string? VirtualOutputId { get; set; }
     public double MicrophoneGain { get; set; } = 1;
     public double SystemAudioGain { get; set; } = 1;

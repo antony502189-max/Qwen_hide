@@ -10,6 +10,10 @@ public sealed class CoreTests
     [Fact] public void Modifier_release_requires_all_keys_up() { Assert.False(ModifierReleasePolicy.Released(true, false, false)); Assert.False(ModifierReleasePolicy.Released(false, true, false)); Assert.True(ModifierReleasePolicy.Released(false, false, false)); }
     [Fact] public void Right_ctrl_state_is_edge_triggered() { var state = new RightCtrlStateMachine(); Assert.True(state.OnDown()); Assert.False(state.OnDown()); Assert.True(state.OnUp()); Assert.False(state.OnUp()); }
     [Fact] public void Audio_fails_closed_without_dedicated_virtual_endpoint() { Assert.False(AudioEndpointSafety.CanStart("mic", null, true)); Assert.False(AudioEndpointSafety.CanStart("same", "same", true)); Assert.False(AudioEndpointSafety.CanStart("mic", "virtual", false)); Assert.True(AudioEndpointSafety.CanStart("mic", "virtual", true)); }
+    [Theory] [InlineData("CABLE Input (VB-Audio Virtual Cable)")] [InlineData("VoiceMeeter Input")]
+    public void Recognized_virtual_outputs_are_allowed_by_name_policy(string name) => Assert.True(VirtualMixOutputPolicy.IsRecognizedVirtualName(name));
+    [Theory] [InlineData("Speakers (Realtek)")] [InlineData("Headphones")]
+    public void Physical_outputs_are_rejected_by_virtual_output_policy(string name) => Assert.False(VirtualMixOutputPolicy.IsRecognizedVirtualName(name));
     [Fact] public void Voice_never_invokes_an_undiscovered_shortcut() { Assert.False(VoiceShortcutPolicy.CanInvoke(false, "Alt+Space")); Assert.False(VoiceShortcutPolicy.CanInvoke(true, "")); Assert.True(VoiceShortcutPolicy.CanInvoke(true, "Alt+Space")); }
     [Theory] [InlineData("Запустить голосовой режим")] [InlineData("Начало диктовки")] [InlineData("Start voice mode")]
     public void Voice_accessibility_fallback_is_localized_and_not_coordinate_based(string name) => Assert.True(VoiceControlPolicy.NameLooksLikeVoiceControl(name));
