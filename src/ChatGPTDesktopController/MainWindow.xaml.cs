@@ -29,7 +29,8 @@ public partial class MainWindow : Window
         _hotkeys.RightCtrlChanged += RightCtrlChanged; _emergency = new EmergencyHotkey(Emergency); _tray = new TrayController(ShowController, RefreshAndShowDiagnostics, ExitSafely);
         Attach(); TryAutoLaunch(); RefreshDiagnostics();
         _reacquireTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _reacquireTimer.Tick += (_, _) => ReacquireIfNeeded(); _reacquireTimer.Start(); Loaded += (_, _) => { if (_settings.StartInTray) Hide(); };
+        _reacquireTimer.Tick += (_, _) => ReacquireIfNeeded();
+        _reacquireTimer.Start();
     }
 
     private void HandleHotkey(int id) => Dispatcher.BeginInvoke(async () =>
