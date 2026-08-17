@@ -36,14 +36,14 @@ if ($chatPids.Count -eq 0) { throw 'ChatGPT Classic is not running.' }
 $candidates = [System.Collections.Generic.List[object]]::new()
 $callback = [ChatGPTCaptureProbe.Native+EnumWindowsProc]{
     param([IntPtr]$hwnd, [IntPtr]$lParam)
-    [uint32]$pid = 0
-    [void][ChatGPTCaptureProbe.Native]::GetWindowThreadProcessId($hwnd, [ref]$pid)
-    if (-not $chatPids.Contains($pid) -or -not [ChatGPTCaptureProbe.Native]::IsWindowVisible($hwnd)) { return $true }
+    [uint32]$ownerPid = 0
+    [void][ChatGPTCaptureProbe.Native]::GetWindowThreadProcessId($hwnd, [ref]$ownerPid)
+    if (-not $chatPids.Contains($ownerPid) -or -not [ChatGPTCaptureProbe.Native]::IsWindowVisible($hwnd)) { return $true }
     $rect = New-Object ChatGPTCaptureProbe.Native+RECT
     if (-not [ChatGPTCaptureProbe.Native]::GetWindowRect($hwnd, [ref]$rect)) { return $true }
     $w = $rect.Right - $rect.Left; $h = $rect.Bottom - $rect.Top
     if ($w -lt 320 -or $h -lt 200) { return $true }
-    $candidates.Add([pscustomobject]@{ Hwnd=$hwnd; Pid=$pid; Rect=$rect; Area=([int64]$w * [int64]$h) })
+    $candidates.Add([pscustomobject]@{ Hwnd=$hwnd; Pid=$ownerPid; Rect=$rect; Area=([int64]$w * [int64]$h) })
     return $true
 }
 [void][ChatGPTCaptureProbe.Native]::EnumWindows($callback, [IntPtr]::Zero)
