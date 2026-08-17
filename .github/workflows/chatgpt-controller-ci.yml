@@ -42,7 +42,8 @@ jobs:
             '.\scripts\test-chatgpt-capture-privacy.ps1',
             '.\scripts\watch-chatgpt-capture-affinity.ps1',
             '.\scripts\build-chatgpt-advanced-capture-probes.ps1',
-            '.\scripts\run-chatgpt-advanced-capture-audit.ps1'
+            '.\scripts\run-chatgpt-advanced-capture-audit.ps1',
+            '.\scripts\stress-chatgpt-privacy-transitions.ps1'
           )
           foreach ($script in $scripts) {
             if (-not (Test-Path -LiteralPath $script)) { throw "Missing privacy probe: $script" }
