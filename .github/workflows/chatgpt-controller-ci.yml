@@ -40,7 +40,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $scripts = @(
             '.\scripts\test-chatgpt-capture-privacy.ps1',
-            '.\scripts\watch-chatgpt-capture-affinity.ps1'
+            '.\scripts\watch-chatgpt-capture-affinity.ps1',
+            '.\scripts\build-chatgpt-advanced-capture-probes.ps1'
           )
           foreach ($script in $scripts) {
             if (-not (Test-Path -LiteralPath $script)) { throw "Missing privacy probe: $script" }
@@ -51,6 +52,26 @@ jobs:
               $errors | ForEach-Object { Write-Error $_.Message }
               throw "PowerShell parse failed: $script"
             }
+          }
+
+      - name: Compile advanced capture probes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkIncludeRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
+          $cppWinRt = $null
+          if (Test-Path -LiteralPath $sdkIncludeRoot) {
+            $latest = Get-ChildItem -LiteralPath $sdkIncludeRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            if ($latest) {
+              $candidate = Join-Path $latest.FullName 'cppwinrt'
+              if (Test-Path -LiteralPath (Join-Path $candidate 'winrt\base.h')) { $cppWinRt = $candidate }
+            }
+          }
+          if ($cppWinRt) {
+            powershell -ExecutionPolicy Bypass -File .\scripts\build-chatgpt-advanced-capture-probes.ps1 -CppWinRtInclude $cppWinRt
+          } else {
+            Write-Warning 'C++/WinRT headers unavailable on runner; compiling DXGI probe only.'
+            powershell -ExecutionPolicy Bypass -File .\scripts\build-chatgpt-advanced-capture-probes.ps1 -SkipWindowsGraphicsCapture
           }
 
       - name: Full build, tests and packaging
