@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly EmergencyHotkey _emergency;
     private readonly TrayController _tray;
     private readonly PrivacyGuardService _privacy;
+    private readonly PrivacyTransitionCoordinator _privacyTransitions;
     private readonly ControllerSettings _settings;
     private readonly System.Windows.Threading.DispatcherTimer _reacquireTimer;
     private readonly object _audioGate = new();
@@ -32,6 +33,7 @@ public partial class MainWindow : Window
         // Capture protection is intentionally isolated from WindowController and all stable hotkeys.
         // It only applies/verifies Windows display affinity and never rewrites opacity/TopMost/click-through state.
         _privacy = new PrivacyGuardService(log);
+        _privacyTransitions = new PrivacyTransitionCoordinator(_privacy, log);
         SourceInitialized += (_, _) =>
         {
             try
@@ -55,7 +57,27 @@ public partial class MainWindow : Window
         {
             switch (id)
             {
-                case 1: EnsureAttached(); _window.ToggleVisibility(); break;
+                case 1:
+                {
+                    EnsureAttached();
+                    var wasHidden = _window.Hidden;
+                    var toggled = _window.ToggleVisibility();
+                    if (toggled && wasHidden && !_window.Hidden && _window.Target is { } shownTarget)
+                    {
+                        // Electron can clear WDA as the real window is shown. Immediately request repair,
+                        // then fail closed if the real HWND cannot be externally verified at 0x11.
+                        _privacyTransitions.TrackPrimaryTarget(shownTarget);
+                        _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
+                        var verified = await _privacyTransitions.EnsureVerifiedAfterShowAsync(
+                            shownTarget.Hwnd, TimeSpan.FromMilliseconds(900));
+                        if (!verified && _window.IsAttached && !_window.Hidden)
+                        {
+                            _log.Error("Privacy fail-closed: ChatGPT show was not verified capture-excluded; hiding target again.");
+                            _window.ToggleVisibility();
+                        }
+                    }
+                    break;
+                }
                 case 2: EnsureAttached(); _window.ToggleClickThrough(); break;
                 case 3: EnsureAttached(); _window.ToggleTopMost(); break;
                 case 4: EnsureAttached(); _window.AdjustOpacity(.05); break;
@@ -70,7 +92,23 @@ public partial class MainWindow : Window
         finally { if (Volatile.Read(ref _shutdownStarted) == 0) RefreshDiagnostics(); }
     });
 
-    private void Attach() { if (Volatile.Read(ref _shutdownStarted) != 0) return; var target = _locator.FindRunningTarget(); if (target is not null) { _window.Attach(target); _privacy.ScanNow(); } else _log.Info("ChatGPT Classic target not running."); }
+    private void Attach()
+    {
+        if (Volatile.Read(ref _shutdownStarted) != 0) return;
+        var target = _locator.FindRunningTarget();
+        if (target is not null)
+        {
+            _window.Attach(target);
+            _privacyTransitions.TrackPrimaryTarget(target);
+            _privacy.ScanNow();
+        }
+        else
+        {
+            _privacyTransitions.TrackPrimaryTarget(null);
+            _log.Info("ChatGPT Classic target not running.");
+        }
+    }
+
     private void ReacquireIfNeeded()
     {
         if (Volatile.Read(ref _shutdownStarted) != 0) return;
@@ -102,13 +140,14 @@ public partial class MainWindow : Window
     {
         using var process = Process.GetCurrentProcess(); var target = _window.Target; var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
         var privacy = _privacy.Snapshot;
+        var transitions = _privacyTransitions.Snapshot;
         _tray.UpdatePrivacy(privacy);
         StatusText.Text = target is null ? "ChatGPT Classic not attached. Open the installed ChatGPT Classic app, then click Attach / refresh." : "Attached: " + target.Summary;
         var lines = new List<string>
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, continuously monitored and re-applied to recreated ChatGPT top-level windows", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, event-driven repair + primary watchdog + transition burst verification", "  fail-closed: a user-triggered show is reverted to hidden if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
@@ -117,12 +156,12 @@ public partial class MainWindow : Window
     }
 
     private void AttachClick(object sender, RoutedEventArgs e) { Attach(); RefreshDiagnostics(); }
-    private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); _privacy.ScanNow(); RefreshDiagnostics(); }
+    private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); }
     private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings, _audioDevices ??= new AudioDeviceService()) { Owner = this }; if (dialog.ShowDialog() == true) { TryAutoLaunch(); RefreshDiagnostics(); } }
     private void RestoreClick(object sender, RoutedEventArgs e) { _window.Restore(); RefreshDiagnostics(); }
     private void ExitClick(object sender, RoutedEventArgs e) => ExitSafely();
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
-    private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); _privacy.ScanNow(); RefreshDiagnostics(); ShowController(); }
+    private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); ShowController(); }
     private void ExitSafely() { Interlocked.Exchange(ref _shutdownStarted, 1); Close(); }
-    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); _privacy.Dispose(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); _privacyTransitions.Dispose(); _privacy.Dispose(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
 }
