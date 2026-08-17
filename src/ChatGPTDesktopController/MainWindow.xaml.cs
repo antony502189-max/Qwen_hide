@@ -69,10 +69,22 @@ public partial class MainWindow : Window
                         await VerifyVisibleTargetPrivacyAsync("Ctrl+Alt+Q show");
                     break;
                 }
-                case 2: EnsureAttached(); _window.ToggleClickThrough(); break;
-                case 3: EnsureAttached(); _window.ToggleTopMost(); break;
-                case 4: EnsureAttached(); _window.AdjustOpacity(.05); break;
-                case 5: EnsureAttached(); _window.AdjustOpacity(-.05); break;
+                case 2:
+                    EnsureAttached();
+                    if (_window.ToggleClickThrough()) await VerifyVisibleTargetPrivacyAsync("click-through transition");
+                    break;
+                case 3:
+                    EnsureAttached();
+                    if (_window.ToggleTopMost()) await VerifyVisibleTargetPrivacyAsync("TopMost transition");
+                    break;
+                case 4:
+                    EnsureAttached();
+                    if (_window.AdjustOpacity(.05)) await VerifyVisibleTargetPrivacyAsync("opacity transition");
+                    break;
+                case 5:
+                    EnsureAttached();
+                    if (_window.AdjustOpacity(-.05)) await VerifyVisibleTargetPrivacyAsync("opacity transition");
+                    break;
                 case 6: EnsureAttached(); await _paste.PasteImageAsync(_window.Target, _window); break;
                 case 7: EnsureAttached(); _voice.Probe(_window.Target); ShowController(); break;
                 case 8:
@@ -80,6 +92,7 @@ public partial class MainWindow : Window
                     _log.Info("F6: " + _capture.Detail);
                     // F6 temporarily hides and restores the real target when it overlaps the captured monitor.
                     // Treat that restore exactly like any other Electron show transition and re-verify WDA.
+                    _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
                     await VerifyVisibleTargetPrivacyAsync("F6 restore");
                     break;
                 case 9: EnsureAttached(); _voice.Probe(_window.Target); _window.EnsureInteractive(() => _voice.Invoke(_window.Target)); break;
@@ -199,7 +212,7 @@ public partial class MainWindow : Window
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, synchronous attach protection + event-driven repair + primary watchdog + transition burst verification", "  fail-closed: attach, user-triggered show, F6 restore, target reacquire, or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, synchronous attach protection + event-driven repair + primary watchdog + transition burst verification", "  fail-closed: attach, visual transitions, F6 restore, target reacquire, DWM loss, or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
@@ -210,7 +223,7 @@ public partial class MainWindow : Window
     private void AttachClick(object sender, RoutedEventArgs e) { Attach(); RefreshDiagnostics(); }
     private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); }
     private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings, _audioDevices ??= new AudioDeviceService()) { Owner = this }; if (dialog.ShowDialog() == true) { TryAutoLaunch(); RefreshDiagnostics(); } }
-    private void RestoreClick(object sender, RoutedEventArgs e) { _window.Restore(); RefreshDiagnostics(); }
+    private async void RestoreClick(object sender, RoutedEventArgs e) { if (_window.Restore()) await VerifyVisibleTargetPrivacyAsync("manual restore"); RefreshDiagnostics(); }
     private void ExitClick(object sender, RoutedEventArgs e) => ExitSafely();
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); ShowController(); }
