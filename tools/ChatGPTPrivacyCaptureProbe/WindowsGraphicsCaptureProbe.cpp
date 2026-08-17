@@ -132,7 +132,9 @@ int wmain(int argc,wchar_t**argv)
             RECT local{0,0,item.Size().Width,item.Size().Height}; Sample protectedWindow;
             hr=CaptureSample(d3d.Get(),pool,ready,local,local,&protectedWindow);
             pool.FrameArrived(token); CloseHandle(ready); session.Close(); pool.Close();
-            if(FAILED(hr)){ std::wprintf(L"RESULT WGC_WINDOW=PASS_EXCLUDED_OR_DENIED Detail=capture-0x%08X\n",(unsigned)hr); return 0; }
+            // A failed/denied capture is not sufficient evidence that WDA caused the failure. Treat it
+            // as inconclusive rather than turning an unrelated WGC/runtime error into a privacy PASS.
+            if(FAILED(hr)){ std::wprintf(L"RESULT WGC_WINDOW=INCONCLUSIVE_CAPTURE_FAILED Detail=capture-0x%08X\n",(unsigned)hr); return 7; }
             const wchar_t* verdict=(protectedWindow.blackRatio>0.97 && protectedWindow.variance<6)?L"PASS_EXCLUDED_BLACK":L"INCONCLUSIVE_FRAME_RETURNED";
             std::wprintf(L"RESULT WGC_WINDOW=%s Mean=%.1f Variance=%.1f BlackRatio=%.3f\n",verdict,protectedWindow.mean,protectedWindow.variance,protectedWindow.blackRatio);
             return 0;
