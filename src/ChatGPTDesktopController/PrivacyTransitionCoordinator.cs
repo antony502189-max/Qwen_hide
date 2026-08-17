@@ -21,6 +21,9 @@ public static class PrivacyTransitionPolicy
     public static bool IsVerified(bool getterSucceeded, uint affinity) =>
         getterSucceeded && affinity == RequiredAffinity;
 
+    public static bool IsRuntimeVerified(bool dwmComposing, bool getterSucceeded, uint affinity) =>
+        dwmComposing && IsVerified(getterSucceeded, affinity);
+
     public static bool NeedsRepair(bool getterSucceeded, uint affinity) =>
         !getterSucceeded || affinity != RequiredAffinity;
 }
@@ -57,8 +60,8 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
     {
         _guard = guard;
         _log = log;
-        // This timer only reads affinity for one HWND. Expensive process enumeration/repair remains
-        // inside PrivacyGuardService and is requested only when the primary state is not verified.
+        // This timer only reads DWM state + affinity for one HWND. Expensive process enumeration/repair
+        // remains inside PrivacyGuardService and is requested only when the primary state is not verified.
         _watchdog = new Timer(_ => WatchdogTick(), null, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(100));
     }
 
@@ -75,7 +78,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
         }
 
         Interlocked.Exchange(ref _primaryHwnd, target.Hwnd.ToInt64());
-        Volatile.Write(ref _primaryPid, target.ProcessId);
+        Volatile.Write(ref _primaryPid, (uint)target.ProcessId);
         Volatile.Write(ref _snapshot, new PrivacyTransitionSnapshot(
             true, false, "checking", Interlocked.Read(ref _repairRequests), DateTimeOffset.MinValue,
             $"Tracking HWND 0x{target.Hwnd.ToInt64():X} PID {target.ProcessId}"));
@@ -144,8 +147,18 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
             return;
         }
 
+        var dwmComposing = NativePrivacy.DwmIsCompositionEnabled(out var composing) == 0 && composing;
+        if (!dwmComposing)
+        {
+            Volatile.Write(ref _snapshot, new PrivacyTransitionSnapshot(
+                true, false, "dwm-unavailable", Interlocked.Read(ref _repairRequests), Snapshot.LastVerifiedUtc,
+                "DWM composition is unavailable; display-affinity capture protection cannot be trusted"));
+            NoteUnverified(hwnd);
+            return;
+        }
+
         var getterSucceeded = NativePrivacy.GetWindowDisplayAffinity(hwnd, out var affinity);
-        if (PrivacyTransitionPolicy.IsVerified(getterSucceeded, affinity))
+        if (PrivacyTransitionPolicy.IsRuntimeVerified(dwmComposing, getterSucceeded, affinity))
         {
             RecordVerified(hwnd, affinity);
             return;
@@ -161,8 +174,12 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
 
     private bool ReadVerified(IntPtr hwnd, out uint affinity)
     {
+        affinity = 0;
+        var dwmComposing = NativePrivacy.DwmIsCompositionEnabled(out var composing) == 0 && composing;
+        if (!dwmComposing) return false;
+
         var getterSucceeded = NativePrivacy.GetWindowDisplayAffinity(hwnd, out affinity);
-        if (!PrivacyTransitionPolicy.IsVerified(getterSucceeded, affinity)) return false;
+        if (!PrivacyTransitionPolicy.IsRuntimeVerified(dwmComposing, getterSucceeded, affinity)) return false;
         RecordVerified(hwnd, affinity);
         return true;
     }
@@ -173,7 +190,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
         var now = DateTimeOffset.UtcNow;
         Volatile.Write(ref _snapshot, new PrivacyTransitionSnapshot(
             true, true, $"0x{affinity:X}", Interlocked.Read(ref _repairRequests), now,
-            $"Primary HWND 0x{hwnd.ToInt64():X} externally verified at WDA_EXCLUDEFROMCAPTURE"));
+            $"Primary HWND 0x{hwnd.ToInt64():X} externally verified at WDA_EXCLUDEFROMCAPTURE with DWM active"));
     }
 
     private void NoteUnverified(IntPtr hwnd)
@@ -206,7 +223,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
         if (Volatile.Read(ref _disposed) != 0) return;
 
         // Avoid turning a persistent failure into a tight injection loop. The underlying guard also
-        // serializes scans, while burst scheduling provides low-latency retries around known transitions.
+        // serializes scans/calls, while burst scheduling provides low-latency retries around transitions.
         var now = Stopwatch.GetTimestamp();
         var previous = Interlocked.Read(ref _lastRepairRequestTicks);
         var minimumTicks = Math.Max(1L, Stopwatch.Frequency / 20); // 50 ms
