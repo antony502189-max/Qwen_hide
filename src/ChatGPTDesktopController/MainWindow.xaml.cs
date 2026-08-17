@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     private readonly GlobalHotkeys _hotkeys;
     private readonly EmergencyHotkey _emergency;
     private readonly TrayController _tray;
+    private readonly PrivacyGuardService _privacy;
     private readonly ControllerSettings _settings;
     private readonly System.Windows.Threading.DispatcherTimer _reacquireTimer;
     private readonly object _audioGate = new();
@@ -27,6 +28,20 @@ public partial class MainWindow : Window
         InitializeComponent(); _log = log; _settings = SettingsService.Load(); _locator = new(log); _recovery = new(log);
         _window = new(log, _recovery); _paste = new(log); _voice = new(log); _hotkeys = new GlobalHotkeys(HandleHotkey);
         _hotkeys.RightCtrlChanged += RightCtrlChanged; _emergency = new EmergencyHotkey(Emergency); _tray = new TrayController(ShowController, RefreshAndShowDiagnostics, ExitSafely);
+
+        // Capture protection is intentionally isolated from WindowController and all stable hotkeys.
+        // It only applies/verifies Windows display affinity and never rewrites opacity/TopMost/click-through state.
+        _privacy = new PrivacyGuardService(log);
+        SourceInitialized += (_, _) =>
+        {
+            try
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                _privacy.ProtectControllerOwnedWindow(hwnd);
+            }
+            catch (Exception ex) { _log.Error("Controller privacy initialization failed: " + ex.GetType().Name); }
+        };
+
         Attach(); TryAutoLaunch(); RefreshDiagnostics();
         _reacquireTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _reacquireTimer.Tick += (_, _) => ReacquireIfNeeded();
@@ -55,7 +70,7 @@ public partial class MainWindow : Window
         finally { if (Volatile.Read(ref _shutdownStarted) == 0) RefreshDiagnostics(); }
     });
 
-    private void Attach() { if (Volatile.Read(ref _shutdownStarted) != 0) return; var target = _locator.FindRunningTarget(); if (target is not null) _window.Attach(target); else _log.Info("ChatGPT Classic target not running."); }
+    private void Attach() { if (Volatile.Read(ref _shutdownStarted) != 0) return; var target = _locator.FindRunningTarget(); if (target is not null) { _window.Attach(target); _privacy.ScanNow(); } else _log.Info("ChatGPT Classic target not running."); }
     private void ReacquireIfNeeded() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached) return; Attach(); TryAutoLaunch(); RefreshDiagnostics(); }
     private void TryAutoLaunch() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached || !_settings.AutoLaunchTarget) return; var path = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (path is not null) _locator.TryLaunch(path); }
     private void EnsureAttached() { if (!_window.IsAttached) Attach(); }
@@ -76,11 +91,14 @@ public partial class MainWindow : Window
     private void RefreshDiagnostics()
     {
         using var process = Process.GetCurrentProcess(); var target = _window.Target; var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+        var privacy = _privacy.Snapshot;
         StatusText.Text = target is null ? "ChatGPT Classic not attached. Open the installed ChatGPT Classic app, then click Attach / refresh." : "Attached: " + target.Summary;
         var lines = new List<string>
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
-            "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "", "Hotkeys"
+            "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, continuously verified and re-applied to recreated ChatGPT top-level windows", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
         lines.AddRange([$"  Right Ctrl audio hook: {(_hotkeys.RightCtrlHookReady ? "registered" : "FAILED")}", $"  Ctrl+Alt+Esc emergency: {(_emergency.Registered ? "registered" : "FAILED " + _emergency.Win32Error)}", "", "Window", $"  opacity: {_window.Opacity:P0}", $"  TopMost: {_window.TopMost}", $"  click-through: {_window.ClickThrough}", $"  hidden: {_window.Hidden}", "", "Screenshot", $"  last: {_capture.Detail}", "", "Paste", $"  stage: {_paste.LastResult.Stage}", $"  method: {_paste.LastResult.Method}", $"  detail: {_paste.LastResult.Detail}", "", "Voice", $"  native shortcut: {_voice.Status.Shortcut}", $"  last: {_voice.Status.LastInvocation}", $"  fallback: {_voice.Status.FallbackState}", "", "Audio", $"  Right Ctrl enabled: {_settings.RightCtrlAudioEnabled}", $"  status: {_audio?.Status ?? "Not started"}", $"  microphone: {_audio?.Microphone ?? "Not started"}", $"  loopback: {_audio?.Loopback ?? "Not started"}", $"  virtual output: {_audio?.VirtualOutput ?? "Not started"}", "  endpoint safety: Windows defaults are never selected or changed.", "", "Recovery", $"  journal exists: {_recovery.HasPendingSnapshot}", $"  path: {_recovery.JournalPath}"]);
@@ -88,12 +106,12 @@ public partial class MainWindow : Window
     }
 
     private void AttachClick(object sender, RoutedEventArgs e) { Attach(); RefreshDiagnostics(); }
-    private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); RefreshDiagnostics(); }
+    private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); _privacy.ScanNow(); RefreshDiagnostics(); }
     private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings, _audioDevices ??= new AudioDeviceService()) { Owner = this }; if (dialog.ShowDialog() == true) { TryAutoLaunch(); RefreshDiagnostics(); } }
     private void RestoreClick(object sender, RoutedEventArgs e) { _window.Restore(); RefreshDiagnostics(); }
     private void ExitClick(object sender, RoutedEventArgs e) => ExitSafely();
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
-    private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); RefreshDiagnostics(); ShowController(); }
+    private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); _privacy.ScanNow(); RefreshDiagnostics(); ShowController(); }
     private void ExitSafely() { Interlocked.Exchange(ref _shutdownStarted, 1); Close(); }
-    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); _privacy.Dispose(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
 }
