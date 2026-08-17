@@ -86,8 +86,6 @@ public sealed class PrivacyGuardService : IDisposable
             return false;
         }
 
-        // GetWindowDisplayAffinity is documented to require a layered window. A normal WPF window
-        // can therefore accept SetWindowDisplayAffinity while the getter remains unavailable.
         return !NativePrivacy.GetWindowDisplayAffinity(hwnd, out var affinity) || affinity == WdaExcludeFromCapture;
     }
 
@@ -96,7 +94,6 @@ public sealed class PrivacyGuardService : IDisposable
     private void OnWinEvent(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint eventThread, uint eventTime)
     {
         if (Volatile.Read(ref _disposed) != 0 || hwnd == IntPtr.Zero || idObject != NativePrivacy.OBJID_WINDOW || idChild != 0) return;
-        // Queue outside the WinEvent callback. Never perform process injection on the UI/event callback thread.
         QueueScan();
     }
 
@@ -194,7 +191,7 @@ public sealed class PrivacyGuardService : IDisposable
         else if (protectedCount == windows.Count)
         {
             state = PrivacyGuardState.Partial;
-            detail = $"WDA_EXCLUDEFROMCAPTURE applied to all {protectedCount} ChatGPT window(s), externally verified on {verifiedCount}; getter verification requires layered windows, so a capture-path test is still required";
+            detail = $"WDA_EXCLUDEFROMCAPTURE applied to all {protectedCount} ChatGPT window(s), externally verified on {verifiedCount}; capture-path testing remains required";
         }
         else if (protectedCount > 0)
         {
@@ -226,16 +223,10 @@ public sealed class PrivacyGuardService : IDisposable
                 _successfulRemoteApplications[handleKey] = window.ProcessId;
                 return new(true, true, "externally verified");
             }
-
-            // A readable value other than 0x11 is authoritative evidence that protection is gone.
-            // Never let an earlier successful setter cache suppress repair after hide/show or an
-            // Electron lifecycle transition resets the real HWND back to WDA_NONE.
             _successfulRemoteApplications.TryRemove(handleKey, out _);
         }
         else if (_successfulRemoteApplications.TryGetValue(handleKey, out var appliedPid) && appliedPid == window.ProcessId)
         {
-            // Only trust the cache when the getter truly cannot inspect the HWND. If the getter can
-            // read WDA_NONE (or any non-0x11 value), the branch above invalidates the cache and repairs it.
             return new(true, false, "setter returned TRUE; external getter unavailable on non-layered window");
         }
 
@@ -247,16 +238,10 @@ public sealed class PrivacyGuardService : IDisposable
 
         _successfulRemoteApplications[handleKey] = window.ProcessId;
 
-        // Verification is intentionally external when Windows permits it. Microsoft documents the getter
-        // as requiring a layered window; failure on a normal Chromium HWND therefore does not invalidate a
-        // TRUE return from the setter executed inside the owning ChatGPT process.
         if (NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var verified))
         {
             if (verified != WdaExcludeFromCapture)
             {
-                // The setter returned TRUE but the independently readable state says protection did not
-                // stick. Invalidate the cache so the next event/backstop scan can retry instead of turning
-                // this into a permanent false-positive "protected" state.
                 _successfulRemoteApplications.TryRemove(handleKey, out _);
                 return new(false, false, $"affinity verification mismatch 0x{verified:X}");
             }
@@ -310,8 +295,6 @@ public sealed class PrivacyGuardService : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _timer.Dispose();
         if (_winEventHook != IntPtr.Zero) NativePrivacy.UnhookWinEvent(_winEventHook);
-        // Deliberately do NOT clear ChatGPT's affinity here. If the controller exits while a share is
-        // active, keeping the protection on the existing ChatGPT HWND is safer than exposing it.
     }
 
     private readonly record struct ChatGptWindow(IntPtr Hwnd, uint ProcessId, string Architecture);
@@ -334,11 +317,26 @@ internal static class RemoteDisplayAffinity
     private const uint TH32CS_SNAPMODULE = 0x00000008;
     private const uint TH32CS_SNAPMODULE32 = 0x00000010;
     private static readonly SemaphoreSlim InjectionGate = new(1, 1);
+    private static readonly ConcurrentDictionary<uint, byte> UncertainTimedOutProcesses = new();
 
     public static bool TrySet(uint pid, IntPtr hwnd, uint affinity, out string detail)
     {
+        if (UncertainTimedOutProcesses.ContainsKey(pid))
+        {
+            detail = "remote affinity call previously timed out for this PID; refusing further injection until ChatGPT/controller restart";
+            return false;
+        }
+
         InjectionGate.Wait();
-        try { return TrySetSerialized(pid, hwnd, affinity, out detail); }
+        try
+        {
+            if (UncertainTimedOutProcesses.ContainsKey(pid))
+            {
+                detail = "remote affinity call previously timed out for this PID; refusing further injection until ChatGPT/controller restart";
+                return false;
+            }
+            return TrySetSerialized(pid, hwnd, affinity, out detail);
+        }
         finally { InjectionGate.Release(); }
     }
 
@@ -408,7 +406,8 @@ internal static class RemoteDisplayAffinity
             var wait = NativePrivacy.WaitForSingleObject(thread, 2000);
             if (wait != WAIT_OBJECT_0)
             {
-                detail = "remote call timeout/wait failure: 0x" + wait.ToString("X");
+                UncertainTimedOutProcesses[pid] = 1;
+                detail = "remote call timeout/wait failure: 0x" + wait.ToString("X") + "; future injection blocked for this PID because thread completion is uncertain";
                 return false;
             }
             completed = true;
@@ -435,7 +434,6 @@ internal static class RemoteDisplayAffinity
         finally
         {
             if (thread != IntPtr.Zero) NativePrivacy.CloseHandle(thread);
-            // Never free executable memory while a timed-out remote thread could still be running in it.
             if (remoteCode != IntPtr.Zero && completed) NativePrivacy.VirtualFreeEx(process, remoteCode, 0, MEM_RELEASE);
             NativePrivacy.CloseHandle(process);
         }
@@ -443,11 +441,6 @@ internal static class RemoteDisplayAffinity
 
     internal static byte[] BuildX64CallStub(IntPtr hwnd, uint affinity, IntPtr function)
     {
-        // Windows x64 ABI:
-        //   RCX = HWND
-        //   EDX = affinity
-        //   RAX = SetWindowDisplayAffinity
-        //   reserve 32-byte shadow space + alignment, call, return BOOL in EAX as thread exit code.
         var code = new List<byte>(40);
         code.AddRange([0x48, 0xB9]);
         code.AddRange(BitConverter.GetBytes(hwnd.ToInt64()));
