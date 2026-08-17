@@ -62,9 +62,32 @@ public partial class MainWindow : Window
                 {
                     EnsureAttached();
                     var wasHidden = _window.Hidden;
+                    var targetBeforeToggle = _window.Target;
+
+                    // Double privacy gate for a user-triggered show. Protect/verify the hidden HWND BEFORE
+                    // ShowWindow, then verify again immediately after ShowWindow because Electron may reset
+                    // affinity during either side of a visibility transition. If the hidden precondition
+                    // cannot be established, refuse to show the window at all.
+                    if (wasHidden && targetBeforeToggle is not null &&
+                        !PrivacyImmediateProtector.EnsureVerified(targetBeforeToggle, _log, "Ctrl+Alt+Q pre-show"))
+                    {
+                        _log.Error("Privacy fail-closed (Ctrl+Alt+Q pre-show): hidden target is not verified at 0x11; refusing to show ChatGPT.");
+                        _privacy.ScanNow();
+                        break;
+                    }
+
                     var toggled = _window.ToggleVisibility();
                     if (toggled && wasHidden && !_window.Hidden)
-                        await VerifyVisibleTargetPrivacyAsync("Ctrl+Alt+Q show");
+                    {
+                        await VerifyVisibleTargetPrivacyAsync("Ctrl+Alt+Q post-show");
+                    }
+                    else if (toggled && !wasHidden && _window.Hidden)
+                    {
+                        // Hide transitions have historically cleared WDA on this Electron build. Kick an
+                        // immediate background repair so the next show starts from a protected hidden HWND.
+                        _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
+                        _privacy.ScanNow();
+                    }
                     break;
                 }
                 case 2:
@@ -153,7 +176,7 @@ public partial class MainWindow : Window
             _privacy.ScanNow();
 
             // A window hidden by the startup gate stays hidden. The user can reveal it with Ctrl+Alt+Q,
-            // which performs a fresh synchronous verification immediately after ShowWindow returns.
+            // which now requires verified 0x11 both before and immediately after ShowWindow.
             if (!immediateVerified && !_window.Hidden && Native.IsWindowVisible(target.Hwnd))
             {
                 _log.Error("Privacy fail-closed (target attach): immediate verification failed and target is visible; hiding ChatGPT.");
@@ -229,7 +252,7 @@ public partial class MainWindow : Window
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, hide-first startup gate + synchronous visible-transition verification + event/watchdog repair", "  fail-closed: unverified visible transitions are hidden immediately; sustained loss or DWM loss also hides ChatGPT", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, hide-first startup + pre/post-show verification + synchronous visible-transition verification + event/watchdog repair", "  fail-closed: an unverified hidden target is not shown; unverified visible transitions are hidden immediately; sustained loss or DWM loss also hides ChatGPT", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
