@@ -82,11 +82,17 @@ public sealed class WindowController : IDisposable
     public bool ToggleTopMost() => Mutate(() =>
     {
         var requested = !TopMost;
-        if (!Native.SetWindowPos(_target!.Hwnd, requested ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST, 0, 0, 0, 0,
-                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED))
+        var hwnd = _target!.Hwnd;
+        var flags = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_FRAMECHANGED;
+        if (!requested) flags |= Native.SWP_NOACTIVATE;
+
+        if (!Native.SetWindowPos(hwnd, requested ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST, 0, 0, 0, 0, flags))
             return false;
-        if (Native.IsTopMost(_target.Hwnd) != requested) return false;
+        if (Native.IsTopMost(hwnd) != requested) return false;
+
         TopMost = requested;
+        if (requested && !Native.TryActivateWindow(hwnd))
+            _log.Error("TopMost enabled but foreground activation was rejected by Windows");
         return true;
     });
 
@@ -207,7 +213,11 @@ public sealed class WindowController : IDisposable
 
         if (!Native.TrySetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr(style))) return false;
         if (!Native.SetLayeredWindowAttributes(hwnd, 0, alpha, Native.LWA_ALPHA)) return false;
-        if (!Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+
+        // Re-assert the actual Z-order band after every visual mutation. Chromium/Electron
+        // windows can otherwise keep the WS_EX_TOPMOST bit while drifting out of the TopMost band.
+        var insertAfter = TopMost ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST;
+        if (!Native.SetWindowPos(hwnd, insertAfter, 0, 0, 0, 0,
                 Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED))
             return false;
 
