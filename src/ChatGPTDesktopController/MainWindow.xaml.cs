@@ -63,20 +63,8 @@ public partial class MainWindow : Window
                     EnsureAttached();
                     var wasHidden = _window.Hidden;
                     var toggled = _window.ToggleVisibility();
-                    if (toggled && wasHidden && !_window.Hidden && _window.Target is { } shownTarget)
-                    {
-                        // Electron can clear WDA as the real window is shown. Immediately request repair,
-                        // then fail closed if the real HWND cannot be externally verified at 0x11.
-                        _privacyTransitions.TrackPrimaryTarget(shownTarget);
-                        _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
-                        var verified = await _privacyTransitions.EnsureVerifiedAfterShowAsync(
-                            shownTarget.Hwnd, TimeSpan.FromMilliseconds(900));
-                        if (!verified && _window.IsAttached && !_window.Hidden)
-                        {
-                            _log.Error("Privacy fail-closed: ChatGPT show was not verified capture-excluded; hiding target again.");
-                            _window.ToggleVisibility();
-                        }
-                    }
+                    if (toggled && wasHidden && !_window.Hidden)
+                        await VerifyVisibleTargetPrivacyAsync("Ctrl+Alt+Q show");
                     break;
                 }
                 case 2: EnsureAttached(); _window.ToggleClickThrough(); break;
@@ -85,13 +73,38 @@ public partial class MainWindow : Window
                 case 5: EnsureAttached(); _window.AdjustOpacity(-.05); break;
                 case 6: EnsureAttached(); await _paste.PasteImageAsync(_window.Target, _window); break;
                 case 7: EnsureAttached(); _voice.Probe(_window.Target); ShowController(); break;
-                case 8: _capture = ScreenshotService.CaptureActiveMonitorToClipboard(_window.Target?.Hwnd ?? IntPtr.Zero); _log.Info("F6: " + _capture.Detail); break;
+                case 8:
+                    _capture = ScreenshotService.CaptureActiveMonitorToClipboard(_window.Target?.Hwnd ?? IntPtr.Zero);
+                    _log.Info("F6: " + _capture.Detail);
+                    // F6 temporarily hides and restores the real target when it overlaps the captured monitor.
+                    // Treat that restore exactly like any other Electron show transition and re-verify WDA.
+                    await VerifyVisibleTargetPrivacyAsync("F6 restore");
+                    break;
                 case 9: EnsureAttached(); _voice.Probe(_window.Target); _window.EnsureInteractive(() => _voice.Invoke(_window.Target)); break;
             }
         }
         catch (Exception ex) { _log.Error($"Hotkey {id} failed: {ex.GetType().Name}"); }
         finally { if (Volatile.Read(ref _shutdownStarted) == 0) RefreshDiagnostics(); }
     });
+
+    private async Task<bool> VerifyVisibleTargetPrivacyAsync(string context)
+    {
+        var target = _window.Target;
+        if (target is null || _window.Hidden || !Native.IsWindow(target.Hwnd) || !Native.IsWindowVisible(target.Hwnd)) return true;
+
+        _privacyTransitions.TrackPrimaryTarget(target);
+        _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
+        var verified = await _privacyTransitions.EnsureVerifiedAfterShowAsync(
+            target.Hwnd, TimeSpan.FromMilliseconds(900));
+        if (verified) return true;
+
+        if (_window.IsAttached && !_window.Hidden && _window.Target?.Hwnd == target.Hwnd && Native.IsWindowVisible(target.Hwnd))
+        {
+            _log.Error($"Privacy fail-closed ({context}): ChatGPT is visible but capture exclusion is not verified; hiding target again.");
+            _window.ToggleVisibility();
+        }
+        return false;
+    }
 
     private void Attach()
     {
@@ -113,7 +126,7 @@ public partial class MainWindow : Window
     private void ReacquireIfNeeded()
     {
         if (Volatile.Read(ref _shutdownStarted) != 0) return;
-        _tray.UpdatePrivacy(_privacy.Snapshot);
+        _tray.UpdatePrivacy(_privacy.Snapshot, _privacyTransitions.Snapshot);
         if (_window.IsAttached)
         {
             if (IsVisible) RefreshDiagnostics();
@@ -158,13 +171,13 @@ public partial class MainWindow : Window
         using var process = Process.GetCurrentProcess(); var target = _window.Target; var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
         var privacy = _privacy.Snapshot;
         var transitions = _privacyTransitions.Snapshot;
-        _tray.UpdatePrivacy(privacy);
+        _tray.UpdatePrivacy(privacy, transitions);
         StatusText.Text = target is null ? "ChatGPT Classic not attached. Open the installed ChatGPT Classic app, then click Attach / refresh." : "Attached: " + target.Summary;
         var lines = new List<string>
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, event-driven repair + primary watchdog + transition burst verification", "  fail-closed: user-triggered show or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, event-driven repair + primary watchdog + transition burst verification", "  fail-closed: user-triggered show, F6 restore, or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
