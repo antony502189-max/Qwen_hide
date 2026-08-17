@@ -9,7 +9,14 @@ public sealed class PrivacyTransitionTests
     public void Exact_exclude_from_capture_value_is_verified()
     {
         Assert.True(PrivacyTransitionPolicy.IsVerified(true, PrivacyGuardService.WdaExcludeFromCapture));
+        Assert.True(PrivacyTransitionPolicy.IsRuntimeVerified(true, true, PrivacyGuardService.WdaExcludeFromCapture));
         Assert.False(PrivacyTransitionPolicy.NeedsRepair(true, PrivacyGuardService.WdaExcludeFromCapture));
+    }
+
+    [Fact]
+    public void Dwm_must_be_active_even_when_affinity_is_0x11()
+    {
+        Assert.False(PrivacyTransitionPolicy.IsRuntimeVerified(false, true, PrivacyGuardService.WdaExcludeFromCapture));
     }
 
     [Theory]
@@ -20,6 +27,7 @@ public sealed class PrivacyTransitionTests
     public void Any_readable_non_exclusion_value_requires_repair(uint affinity)
     {
         Assert.False(PrivacyTransitionPolicy.IsVerified(true, affinity));
+        Assert.False(PrivacyTransitionPolicy.IsRuntimeVerified(true, true, affinity));
         Assert.True(PrivacyTransitionPolicy.NeedsRepair(true, affinity));
     }
 
@@ -27,6 +35,7 @@ public sealed class PrivacyTransitionTests
     public void Unreadable_affinity_is_never_claimed_as_verified()
     {
         Assert.False(PrivacyTransitionPolicy.IsVerified(false, PrivacyGuardService.WdaExcludeFromCapture));
+        Assert.False(PrivacyTransitionPolicy.IsRuntimeVerified(true, false, PrivacyGuardService.WdaExcludeFromCapture));
         Assert.True(PrivacyTransitionPolicy.NeedsRepair(false, PrivacyGuardService.WdaExcludeFromCapture));
     }
 }
