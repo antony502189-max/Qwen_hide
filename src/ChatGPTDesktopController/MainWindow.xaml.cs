@@ -46,8 +46,6 @@ public partial class MainWindow : Window
         };
 
         Attach(); TryAutoLaunch(); RefreshDiagnostics();
-        // Keep target reacquire substantially faster than the old five-second window. This is only a
-        // lightweight process/window lookup and does not change any stable visual behavior.
         _reacquireTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _reacquireTimer.Tick += (_, _) => ReacquireIfNeeded();
         _reacquireTimer.Start();
@@ -90,8 +88,6 @@ public partial class MainWindow : Window
                 case 8:
                     _capture = ScreenshotService.CaptureActiveMonitorToClipboard(_window.Target?.Hwnd ?? IntPtr.Zero);
                     _log.Info("F6: " + _capture.Detail);
-                    // F6 temporarily hides and restores the real target when it overlaps the captured monitor.
-                    // Treat that restore exactly like any other Electron show transition and re-verify WDA.
                     _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
                     await VerifyVisibleTargetPrivacyAsync("F6 restore");
                     break;
@@ -102,23 +98,36 @@ public partial class MainWindow : Window
         finally { if (Volatile.Read(ref _shutdownStarted) == 0) RefreshDiagnostics(); }
     });
 
-    private async Task<bool> VerifyVisibleTargetPrivacyAsync(string context)
+    private Task<bool> VerifyVisibleTargetPrivacyAsync(string context)
     {
         var target = _window.Target;
-        if (target is null || _window.Hidden || !Native.IsWindow(target.Hwnd) || !Native.IsWindowVisible(target.Hwnd)) return true;
+        if (target is null || _window.Hidden || !Native.IsWindow(target.Hwnd) || !Native.IsWindowVisible(target.Hwnd))
+            return Task.FromResult(true);
 
         _privacyTransitions.TrackPrimaryTarget(target);
         _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
-        var verified = await _privacyTransitions.EnsureVerifiedAfterShowAsync(
-            target.Hwnd, TimeSpan.FromMilliseconds(900));
-        if (verified) return true;
+
+        // Maximum-safety path: do not leave an exposed visible window on screen while an asynchronous
+        // repair loop is still trying. The synchronous owner-process call either verifies 0x11 now,
+        // or the existing stable hide/show path immediately hides the target again.
+        if (PrivacyImmediateProtector.EnsureVerified(target, _log, context + " immediate"))
+            return Task.FromResult(true);
 
         if (_window.IsAttached && !_window.Hidden && _window.Target?.Hwnd == target.Hwnd && Native.IsWindowVisible(target.Hwnd))
         {
-            _log.Error($"Privacy fail-closed ({context}): ChatGPT is visible but capture exclusion is not verified; hiding target again.");
+            _log.Error($"Privacy fail-closed ({context}): synchronous capture exclusion verification failed; hiding ChatGPT immediately.");
             _window.ToggleVisibility();
         }
-        return false;
+        _privacy.ScanNow();
+        return Task.FromResult(false);
+    }
+
+    private static bool IsRuntimePrivacyVerified(ChatGPTTarget target)
+    {
+        if (!Native.IsWindow(target.Hwnd)) return false;
+        if (NativePrivacy.DwmIsCompositionEnabled(out var composing) != 0 || !composing) return false;
+        return NativePrivacy.GetWindowDisplayAffinity(target.Hwnd, out var affinity) &&
+               affinity == PrivacyGuardService.WdaExcludeFromCapture;
     }
 
     private void Attach()
@@ -129,15 +138,25 @@ public partial class MainWindow : Window
         {
             if (!_window.Attach(target)) return;
 
-            // Do not leave a newly attached visible target waiting for the asynchronous guard scan.
-            // Establish and externally verify 0x11 synchronously at the lifecycle boundary.
+            // If a newly attached visible HWND is not ALREADY protected, hide it before performing the
+            // remote owner-process call. This avoids leaving private UI visible during the initial repair.
+            var wasVisible = !_window.Hidden && Native.IsWindowVisible(target.Hwnd);
+            if (wasVisible && !IsRuntimePrivacyVerified(target))
+            {
+                _log.Info("Privacy startup gate: visible ChatGPT was not verified at 0x11; hiding it before protection.");
+                if (!_window.ToggleVisibility())
+                    _log.Error("Privacy startup gate could not hide the unverified target before protection attempt.");
+            }
+
             var immediateVerified = PrivacyImmediateProtector.EnsureVerified(target, _log, "target attach");
             _privacyTransitions.TrackPrimaryTarget(target);
             _privacy.ScanNow();
 
+            // A window hidden by the startup gate stays hidden. The user can reveal it with Ctrl+Alt+Q,
+            // which performs a fresh synchronous verification immediately after ShowWindow returns.
             if (!immediateVerified && !_window.Hidden && Native.IsWindowVisible(target.Hwnd))
             {
-                _log.Error("Privacy fail-closed (target attach): immediate capture exclusion verification failed; hiding ChatGPT.");
+                _log.Error("Privacy fail-closed (target attach): immediate verification failed and target is visible; hiding ChatGPT.");
                 _window.ToggleVisibility();
             }
         }
@@ -161,12 +180,7 @@ public partial class MainWindow : Window
         Attach();
         TryAutoLaunch();
         if (_window.IsAttached && !_window.Hidden && _window.Target is { } target && Native.IsWindowVisible(target.Hwnd))
-        {
-            _ = VerifyVisibleTargetPrivacyAsync("target reacquire").ContinueWith(t =>
-            {
-                if (t.IsFaulted) _log.Error("Privacy target-reacquire verification failed: " + t.Exception?.GetBaseException().GetType().Name);
-            }, TaskScheduler.Default);
-        }
+            _ = VerifyVisibleTargetPrivacyAsync("target reacquire");
         RefreshDiagnostics();
     }
     private void TryAutoLaunch() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached || !_settings.AutoLaunchTarget) return; var path = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (path is not null) _locator.TryLaunch(path); }
@@ -196,7 +210,10 @@ public partial class MainWindow : Window
     private void Emergency()
     {
         if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0) return;
+        var target = _window.Target;
         _window.Restore();
+        if (target is not null && Native.IsWindow(target.Hwnd) && Native.IsWindowVisible(target.Hwnd))
+            PrivacyImmediateProtector.EnsureVerified(target, _log, "emergency restore");
         lock (_audioGate) _audio?.Stop();
         Dispatcher.BeginInvoke(Close);
     }
@@ -212,7 +229,7 @@ public partial class MainWindow : Window
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, synchronous attach protection + event-driven repair + primary watchdog + transition burst verification", "  fail-closed: attach, visual transitions, F6 restore, target reacquire, DWM loss, or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, hide-first startup gate + synchronous visible-transition verification + event/watchdog repair", "  fail-closed: unverified visible transitions are hidden immediately; sustained loss or DWM loss also hides ChatGPT", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
@@ -241,8 +258,6 @@ public partial class MainWindow : Window
         _hotkeys.Dispose();
         _emergency.Dispose();
 
-        // Preserve the existing controller shutdown contract: restore the target's original visual state.
-        // Keep the privacy engine alive until AFTER that restore, because Electron/ShowWindow can clear WDA.
         var target = _window.Target;
         _window.Dispose();
         if (target is not null && Native.IsWindow(target.Hwnd) && Native.IsWindowVisible(target.Hwnd))
