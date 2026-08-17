@@ -114,9 +114,19 @@ public partial class MainWindow : Window
         var target = _locator.FindRunningTarget();
         if (target is not null)
         {
-            _window.Attach(target);
+            if (!_window.Attach(target)) return;
+
+            // Do not leave a newly attached visible target waiting for the asynchronous guard scan.
+            // Establish and externally verify 0x11 synchronously at the lifecycle boundary.
+            var immediateVerified = PrivacyImmediateProtector.EnsureVerified(target, _log, "target attach");
             _privacyTransitions.TrackPrimaryTarget(target);
             _privacy.ScanNow();
+
+            if (!immediateVerified && !_window.Hidden && Native.IsWindowVisible(target.Hwnd))
+            {
+                _log.Error("Privacy fail-closed (target attach): immediate capture exclusion verification failed; hiding ChatGPT.");
+                _window.ToggleVisibility();
+            }
         }
         else
         {
@@ -189,7 +199,7 @@ public partial class MainWindow : Window
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, event-driven repair + primary watchdog + transition burst verification", "  fail-closed: user-triggered show, F6 restore, target reacquire, or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, synchronous attach protection + event-driven repair + primary watchdog + transition burst verification", "  fail-closed: attach, user-triggered show, F6 restore, target reacquire, or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
@@ -205,5 +215,27 @@ public partial class MainWindow : Window
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); ShowController(); }
     private void ExitSafely() { Interlocked.Exchange(ref _shutdownStarted, 1); Close(); }
-    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); _privacyTransitions.FailClosedRequested -= PrivacyFailClosedRequested; _privacyTransitions.Dispose(); _privacy.Dispose(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        Interlocked.Exchange(ref _shutdownStarted, 1);
+        _reacquireTimer.Stop();
+        _privacyTransitions.FailClosedRequested -= PrivacyFailClosedRequested;
+        _privacyTransitions.Dispose();
+
+        lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); }
+        _tray.Dispose();
+        _hotkeys.Dispose();
+        _emergency.Dispose();
+
+        // Preserve the existing controller shutdown contract: restore the target's original visual state.
+        // Keep the privacy engine alive until AFTER that restore, because Electron/ShowWindow can clear WDA.
+        var target = _window.Target;
+        _window.Dispose();
+        if (target is not null && Native.IsWindow(target.Hwnd) && Native.IsWindowVisible(target.Hwnd))
+            PrivacyImmediateProtector.EnsureVerified(target, _log, "controller shutdown restore");
+
+        _privacy.Dispose();
+        base.OnClosed(e);
+    }
 }
