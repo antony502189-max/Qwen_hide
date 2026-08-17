@@ -72,8 +72,9 @@ public sealed class PrivacyGuardService : IDisposable
         if (_winEventHook == IntPtr.Zero)
             _log.Error("Privacy guard WinEvent hook unavailable; periodic protection remains active");
 
-        // Event hook handles normal window creation quickly; periodic scan is a recovery backstop.
-        _timer = new Timer(_ => QueueScan(), null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
+        // Event hook handles normal window creation/show immediately. A short periodic scan is a
+        // recovery backstop for Electron transitions that can reset affinity after the show event.
+        _timer = new Timer(_ => QueueScan(), null, TimeSpan.Zero, TimeSpan.FromMilliseconds(500));
     }
 
     public bool ProtectControllerOwnedWindow(IntPtr hwnd)
@@ -216,18 +217,25 @@ public sealed class PrivacyGuardService : IDisposable
         Native.GetWindowThreadProcessId(window.Hwnd, out var actualPid);
         if (actualPid != window.ProcessId) return new(false, false, "HWND owner changed");
 
-        if (NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var current) && current == WdaExcludeFromCapture)
-        {
-            _successfulRemoteApplications[window.Hwnd.ToInt64()] = window.ProcessId;
-            return new(true, true, "externally verified");
-        }
-
         var handleKey = window.Hwnd.ToInt64();
-        if (_successfulRemoteApplications.TryGetValue(handleKey, out var appliedPid) && appliedPid == window.ProcessId)
+        var affinityReadable = NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var current);
+        if (affinityReadable)
         {
-            // Do not keep injecting every two seconds merely because GetWindowDisplayAffinity cannot
-            // inspect a non-layered window. The successful in-process setter is remembered until the
-            // HWND disappears/recreates; if the window later becomes layered, the getter will verify it.
+            if (current == WdaExcludeFromCapture)
+            {
+                _successfulRemoteApplications[handleKey] = window.ProcessId;
+                return new(true, true, "externally verified");
+            }
+
+            // A readable value other than 0x11 is authoritative evidence that protection is gone.
+            // Never let an earlier successful setter cache suppress repair after hide/show or an
+            // Electron lifecycle transition resets the real HWND back to WDA_NONE.
+            _successfulRemoteApplications.TryRemove(handleKey, out _);
+        }
+        else if (_successfulRemoteApplications.TryGetValue(handleKey, out var appliedPid) && appliedPid == window.ProcessId)
+        {
+            // Only trust the cache when the getter truly cannot inspect the HWND. If the getter can
+            // read WDA_NONE (or any non-0x11 value), the branch above invalidates the cache and repairs it.
             return new(true, false, "setter returned TRUE; external getter unavailable on non-layered window");
         }
 
@@ -245,7 +253,13 @@ public sealed class PrivacyGuardService : IDisposable
         if (NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var verified))
         {
             if (verified != WdaExcludeFromCapture)
+            {
+                // The setter returned TRUE but the independently readable state says protection did not
+                // stick. Invalidate the cache so the next event/backstop scan can retry instead of turning
+                // this into a permanent false-positive "protected" state.
+                _successfulRemoteApplications.TryRemove(handleKey, out _);
                 return new(false, false, $"affinity verification mismatch 0x{verified:X}");
+            }
             return new(true, true, "verified");
         }
 
