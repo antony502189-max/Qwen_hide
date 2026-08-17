@@ -10,6 +10,8 @@ namespace ChatGPTDesktopController;
 internal static class PrivacyImmediateProtector
 {
     private static readonly int[] RetryDelaysMilliseconds = [0, 25, 50, 100];
+    private const int VisibleGateWaitMilliseconds = 25;
+    private const uint VisibleRemoteWaitMilliseconds = 250;
 
     public static bool EnsureVerified(ChatGPTTarget? target, AppLogger log, string context)
     {
@@ -54,11 +56,16 @@ internal static class PrivacyImmediateProtector
                 return true;
             }
 
+            // Visible transitions are fail-closed. Never wait behind a long-running background repair or
+            // a multi-second remote call while private UI remains on screen. If this short owner-process
+            // attempt cannot complete, the caller hides ChatGPT and the background guard may retry later.
             if (!RemoteDisplayAffinity.TrySet(
                     (uint)target.ProcessId,
                     target.Hwnd,
                     PrivacyGuardService.WdaExcludeFromCapture,
-                    out lastDetail))
+                    out lastDetail,
+                    gateWaitMilliseconds: VisibleGateWaitMilliseconds,
+                    remoteWaitMilliseconds: VisibleRemoteWaitMilliseconds))
             {
                 continue;
             }
