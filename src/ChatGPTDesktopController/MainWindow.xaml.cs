@@ -34,6 +34,7 @@ public partial class MainWindow : Window
         // It only applies/verifies Windows display affinity and never rewrites opacity/TopMost/click-through state.
         _privacy = new PrivacyGuardService(log);
         _privacyTransitions = new PrivacyTransitionCoordinator(_privacy, log);
+        _privacyTransitions.FailClosedRequested += PrivacyFailClosedRequested;
         SourceInitialized += (_, _) =>
         {
             try
@@ -122,6 +123,22 @@ public partial class MainWindow : Window
     }
     private void TryAutoLaunch() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached || !_settings.AutoLaunchTarget) return; var path = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (path is not null) _locator.TryLaunch(path); }
     private void EnsureAttached() { if (!_window.IsAttached) Attach(); }
+
+    private void PrivacyFailClosedRequested(IntPtr hwnd)
+    {
+        if (Volatile.Read(ref _shutdownStarted) != 0) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (Volatile.Read(ref _shutdownStarted) != 0 || !_window.IsAttached || _window.Hidden) return;
+            var target = _window.Target;
+            if (target is null || target.Hwnd != hwnd || !Native.IsWindowVisible(hwnd)) return;
+
+            _log.Error("Privacy fail-closed watchdog: capture exclusion remained unverified; hiding ChatGPT.");
+            _window.ToggleVisibility();
+            RefreshDiagnostics();
+        });
+    }
+
     private void RightCtrlChanged(bool down)
     {
         if (Volatile.Read(ref _shutdownStarted) != 0 || !_settings.RightCtrlAudioEnabled) return;
@@ -147,7 +164,7 @@ public partial class MainWindow : Window
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, event-driven repair + primary watchdog + transition burst verification", "  fail-closed: a user-triggered show is reverted to hidden if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, event-driven repair + primary watchdog + transition burst verification", "  fail-closed: user-triggered show or sustained visible protection loss hides ChatGPT if 0x11 cannot be externally verified", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
@@ -163,5 +180,5 @@ public partial class MainWindow : Window
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); ShowController(); }
     private void ExitSafely() { Interlocked.Exchange(ref _shutdownStarted, 1); Close(); }
-    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); _privacyTransitions.Dispose(); _privacy.Dispose(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { Interlocked.Exchange(ref _shutdownStarted, 1); _reacquireTimer.Stop(); _privacyTransitions.FailClosedRequested -= PrivacyFailClosedRequested; _privacyTransitions.Dispose(); _privacy.Dispose(); lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); } _tray.Dispose(); _hotkeys.Dispose(); _emergency.Dispose(); _window.Dispose(); base.OnClosed(e); }
 }
