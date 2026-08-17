@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 
 namespace ChatGPTDesktopController;
@@ -18,12 +17,13 @@ public sealed record PrivacyGuardSnapshot(
     bool DwmComposing,
     int WindowsSeen,
     int WindowsProtected,
+    int WindowsVerified,
     int WindowsFailed,
     string Detail,
     DateTimeOffset LastScanUtc)
 {
     public static PrivacyGuardSnapshot Initial { get; } =
-        new(PrivacyGuardState.Waiting, false, 0, 0, 0, "Waiting for ChatGPT Classic", DateTimeOffset.MinValue);
+        new(PrivacyGuardState.Waiting, false, 0, 0, 0, 0, "Waiting for ChatGPT Classic", DateTimeOffset.MinValue);
 }
 
 /// <summary>
@@ -49,6 +49,7 @@ public sealed class PrivacyGuardService : IDisposable
     private readonly NativePrivacy.WinEventDelegate _winEventDelegate;
     private readonly IntPtr _winEventHook;
     private readonly ConcurrentDictionary<long, string> _lastWindowStates = new();
+    private readonly ConcurrentDictionary<long, uint> _successfulRemoteApplications = new();
     private int _scanActive;
     private int _disposed;
     private PrivacyGuardSnapshot _snapshot = PrivacyGuardSnapshot.Initial;
@@ -83,7 +84,10 @@ public sealed class PrivacyGuardService : IDisposable
             _log.Error("Failed to protect controller-owned diagnostics window: win32=" + Marshal.GetLastWin32Error());
             return false;
         }
-        return NativePrivacy.GetWindowDisplayAffinity(hwnd, out var affinity) && affinity == WdaExcludeFromCapture;
+
+        // GetWindowDisplayAffinity is documented to require a layered window. A normal WPF window
+        // can therefore accept SetWindowDisplayAffinity while the getter remains unavailable.
+        return !NativePrivacy.GetWindowDisplayAffinity(hwnd, out var affinity) || affinity == WdaExcludeFromCapture;
     }
 
     public void ScanNow() => QueueScan();
@@ -105,7 +109,7 @@ public sealed class PrivacyGuardService : IDisposable
             {
                 _log.Error("Privacy guard scan failed: " + ex.GetType().Name);
                 Volatile.Write(ref _snapshot, new PrivacyGuardSnapshot(
-                    PrivacyGuardState.Failed, false, 0, 0, 0,
+                    PrivacyGuardState.Failed, false, 0, 0, 0, 0,
                     "Guard scan failed: " + ex.GetType().Name, DateTimeOffset.UtcNow));
             }
             finally { Volatile.Write(ref _scanActive, 0); }
@@ -119,8 +123,9 @@ public sealed class PrivacyGuardService : IDisposable
 
         if (windows.Count == 0)
         {
+            _successfulRemoteApplications.Clear();
             Volatile.Write(ref _snapshot, new PrivacyGuardSnapshot(
-                PrivacyGuardState.Waiting, dwmComposing, 0, 0, 0,
+                PrivacyGuardState.Waiting, dwmComposing, 0, 0, 0, 0,
                 dwmComposing ? "Waiting for ChatGPT Classic windows" : "DWM composition unavailable",
                 DateTimeOffset.UtcNow));
             return;
@@ -129,38 +134,49 @@ public sealed class PrivacyGuardService : IDisposable
         if (!Environment.Is64BitProcess)
         {
             Volatile.Write(ref _snapshot, new PrivacyGuardSnapshot(
-                PrivacyGuardState.Unsupported, dwmComposing, windows.Count, 0, windows.Count,
+                PrivacyGuardState.Unsupported, dwmComposing, windows.Count, 0, 0, windows.Count,
                 "Privacy guard requires the x64 controller build", DateTimeOffset.UtcNow));
             return;
         }
 
         var protectedCount = 0;
+        var verifiedCount = 0;
         var failedCount = 0;
         var failureDetails = new List<string>();
 
         foreach (var window in windows)
         {
             var result = ProtectWindow(window);
-            if (result.Protected) protectedCount++;
+            if (result.Protected)
+            {
+                protectedCount++;
+                if (result.Verified) verifiedCount++;
+            }
             else
             {
                 failedCount++;
                 if (failureDetails.Count < 3) failureDetails.Add($"0x{window.Hwnd.ToInt64():X}: {result.Detail}");
             }
 
-            var stateText = result.Protected ? "protected" : "FAILED " + result.Detail;
+            var stateText = result.Protected
+                ? (result.Verified ? "protected+verified" : "protected+unverified")
+                : "FAILED " + result.Detail;
             var key = window.Hwnd.ToInt64();
             if (!_lastWindowStates.TryGetValue(key, out var previous) || !string.Equals(previous, stateText, StringComparison.Ordinal))
             {
                 _lastWindowStates[key] = stateText;
-                if (result.Protected) _log.Info($"Privacy guard protected ChatGPT HWND 0x{key:X} PID {window.ProcessId}");
-                else _log.Error($"Privacy guard could not protect ChatGPT HWND 0x{key:X}: {result.Detail}");
+                if (result.Protected)
+                    _log.Info($"Privacy guard protected ChatGPT HWND 0x{key:X} PID {window.ProcessId}; verified={result.Verified}");
+                else
+                    _log.Error($"Privacy guard could not protect ChatGPT HWND 0x{key:X}: {result.Detail}");
             }
         }
 
         var activeHandles = windows.Select(x => x.Hwnd.ToInt64()).ToHashSet();
         foreach (var key in _lastWindowStates.Keys)
             if (!activeHandles.Contains(key)) _lastWindowStates.TryRemove(key, out _);
+        foreach (var key in _successfulRemoteApplications.Keys)
+            if (!activeHandles.Contains(key)) _successfulRemoteApplications.TryRemove(key, out _);
 
         PrivacyGuardState state;
         string detail;
@@ -169,15 +185,20 @@ public sealed class PrivacyGuardService : IDisposable
             state = PrivacyGuardState.Failed;
             detail = "DWM composition is not active; Windows display-affinity protection cannot be trusted";
         }
-        else if (protectedCount == windows.Count)
+        else if (verifiedCount == windows.Count)
         {
             state = PrivacyGuardState.Protected;
-            detail = $"WDA_EXCLUDEFROMCAPTURE verified on {protectedCount}/{windows.Count} ChatGPT top-level window(s)";
+            detail = $"WDA_EXCLUDEFROMCAPTURE externally verified on {verifiedCount}/{windows.Count} ChatGPT top-level window(s)";
+        }
+        else if (protectedCount == windows.Count)
+        {
+            state = PrivacyGuardState.Partial;
+            detail = $"WDA_EXCLUDEFROMCAPTURE applied to all {protectedCount} ChatGPT window(s), externally verified on {verifiedCount}; getter verification requires layered windows, so a capture-path test is still required";
         }
         else if (protectedCount > 0)
         {
             state = PrivacyGuardState.Partial;
-            detail = $"Only {protectedCount}/{windows.Count} ChatGPT windows protected; " + string.Join(" | ", failureDetails);
+            detail = $"Only {protectedCount}/{windows.Count} ChatGPT windows protected ({verifiedCount} externally verified); " + string.Join(" | ", failureDetails);
         }
         else
         {
@@ -186,32 +207,49 @@ public sealed class PrivacyGuardService : IDisposable
         }
 
         Volatile.Write(ref _snapshot, new PrivacyGuardSnapshot(
-            state, dwmComposing, windows.Count, protectedCount, failedCount, detail, DateTimeOffset.UtcNow));
+            state, dwmComposing, windows.Count, protectedCount, verifiedCount, failedCount, detail, DateTimeOffset.UtcNow));
     }
 
     private ProtectionResult ProtectWindow(ChatGptWindow window)
     {
-        if (!NativePrivacy.IsWindow(window.Hwnd)) return new(false, "window disappeared");
+        if (!NativePrivacy.IsWindow(window.Hwnd)) return new(false, false, "window disappeared");
         Native.GetWindowThreadProcessId(window.Hwnd, out var actualPid);
-        if (actualPid != window.ProcessId) return new(false, "HWND owner changed");
+        if (actualPid != window.ProcessId) return new(false, false, "HWND owner changed");
 
         if (NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var current) && current == WdaExcludeFromCapture)
-            return new(true, "already protected");
+        {
+            _successfulRemoteApplications[window.Hwnd.ToInt64()] = window.ProcessId;
+            return new(true, true, "externally verified");
+        }
+
+        var handleKey = window.Hwnd.ToInt64();
+        if (_successfulRemoteApplications.TryGetValue(handleKey, out var appliedPid) && appliedPid == window.ProcessId)
+        {
+            // Do not keep injecting every two seconds merely because GetWindowDisplayAffinity cannot
+            // inspect a non-layered window. The successful in-process setter is remembered until the
+            // HWND disappears/recreates; if the window later becomes layered, the getter will verify it.
+            return new(true, false, "setter returned TRUE; external getter unavailable on non-layered window");
+        }
 
         if (!string.Equals(window.Architecture, "x64", StringComparison.OrdinalIgnoreCase))
-            return new(false, "unsupported target architecture " + window.Architecture);
+            return new(false, false, "unsupported target architecture " + window.Architecture);
 
         if (!RemoteDisplayAffinity.TrySet(window.ProcessId, window.Hwnd, WdaExcludeFromCapture, out var remoteDetail))
-            return new(false, remoteDetail);
+            return new(false, false, remoteDetail);
 
-        // Verification is intentionally external. GetWindowDisplayAffinity may inspect another process,
-        // so a successful value here proves that the target HWND now carries the requested affinity.
-        if (!NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var verified))
-            return new(false, "remote call succeeded but affinity verification failed: win32=" + Marshal.GetLastWin32Error());
-        if (verified != WdaExcludeFromCapture)
-            return new(false, $"affinity verification mismatch 0x{verified:X}");
+        _successfulRemoteApplications[handleKey] = window.ProcessId;
 
-        return new(true, "verified");
+        // Verification is intentionally external when Windows permits it. Microsoft documents the getter
+        // as requiring a layered window; failure on a normal Chromium HWND therefore does not invalidate a
+        // TRUE return from the setter executed inside the owning ChatGPT process.
+        if (NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var verified))
+        {
+            if (verified != WdaExcludeFromCapture)
+                return new(false, false, $"affinity verification mismatch 0x{verified:X}");
+            return new(true, true, "verified");
+        }
+
+        return new(true, false, remoteDetail + "; external getter unavailable: win32=" + Marshal.GetLastWin32Error());
     }
 
     private static List<ChatGptWindow> EnumerateChatGptTopLevelWindows()
@@ -263,7 +301,7 @@ public sealed class PrivacyGuardService : IDisposable
     }
 
     private readonly record struct ChatGptWindow(IntPtr Hwnd, uint ProcessId, string Architecture);
-    private readonly record struct ProtectionResult(bool Protected, string Detail);
+    private readonly record struct ProtectionResult(bool Protected, bool Verified, string Detail);
 }
 
 internal static class RemoteDisplayAffinity
