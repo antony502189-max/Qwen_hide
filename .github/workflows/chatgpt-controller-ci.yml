@@ -19,6 +19,25 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Validate privacy PowerShell probes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $scripts = @(
+            '.\scripts\test-chatgpt-capture-privacy.ps1',
+            '.\scripts\watch-chatgpt-capture-affinity.ps1'
+          )
+          foreach ($script in $scripts) {
+            if (-not (Test-Path -LiteralPath $script)) { throw "Missing privacy probe: $script" }
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $script), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              throw "PowerShell parse failed: $script"
+            }
+          }
+
       - name: Full build, tests and packaging
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
