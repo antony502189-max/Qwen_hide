@@ -93,6 +93,11 @@ public sealed class WindowController : IDisposable
         TopMost = requested;
         if (requested && !Native.TryActivateWindow(hwnd))
             _log.Error("TopMost enabled but foreground activation was rejected by Windows");
+
+        // Foreground activation of Electron/Chromium can rebuild the native surface and
+        // normalize layered-window attributes. Re-apply the CURRENT controller visuals
+        // after activation so toggling TopMost never changes opacity or click-through.
+        if (!ApplyVisuals(ClickThrough, Opacity)) return false;
         return true;
     });
 
