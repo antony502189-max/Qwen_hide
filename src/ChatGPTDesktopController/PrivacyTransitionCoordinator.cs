@@ -35,6 +35,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
 {
     private static readonly int[] BurstAtMilliseconds = [0, 40, 100, 200, 400, 800, 1500];
     private static readonly long FailClosedTicks = Math.Max(1L, Stopwatch.Frequency * 3 / 4); // 750 ms
+    private static readonly long FailClosedRetryTicks = Math.Max(1L, Stopwatch.Frequency); // 1 s
 
     private readonly PrivacyGuardService _guard;
     private readonly AppLogger _log;
@@ -46,7 +47,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
     private long _repairRequests;
     private long _lastRepairRequestTicks;
     private long _unverifiedSinceTicks;
-    private int _failClosedSignaled;
+    private long _lastFailClosedSignalTicks;
     private PrivacyTransitionSnapshot _snapshot = PrivacyTransitionSnapshot.Initial;
 
     public PrivacyTransitionSnapshot Snapshot => Volatile.Read(ref _snapshot);
@@ -184,7 +185,10 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
         var since = Interlocked.Read(ref _unverifiedSinceTicks);
         if (since == 0 || now - since < FailClosedTicks) return;
         if (!Native.IsWindowVisible(hwnd)) return;
-        if (Interlocked.CompareExchange(ref _failClosedSignaled, 1, 0) != 0) return;
+
+        var lastSignal = Interlocked.Read(ref _lastFailClosedSignalTicks);
+        if (lastSignal != 0 && now - lastSignal < FailClosedRetryTicks) return;
+        if (Interlocked.CompareExchange(ref _lastFailClosedSignalTicks, now, lastSignal) != lastSignal) return;
 
         _log.Error($"Privacy fail-closed requested: visible ChatGPT HWND 0x{hwnd.ToInt64():X} remained unverified for at least 750 ms");
         try { FailClosedRequested?.Invoke(hwnd); }
@@ -194,7 +198,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
     private void ResetLossWindow()
     {
         Interlocked.Exchange(ref _unverifiedSinceTicks, 0);
-        Interlocked.Exchange(ref _failClosedSignaled, 0);
+        Interlocked.Exchange(ref _lastFailClosedSignalTicks, 0);
     }
 
     private void RequestRepair(string reason)
