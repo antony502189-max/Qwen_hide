@@ -26,14 +26,15 @@ public static class PrivacyTransitionPolicy
 }
 
 /// <summary>
-/// Coordinates short-lived privacy-sensitive target transitions without changing WindowController.
-/// The full PrivacyGuardService owns application/repair of WDA. This class adds a cheap primary-HWND
-/// watchdog, burst scans after visibility/lifecycle transitions, and a fail-closed verification wait
-/// used by the user-triggered show path.
+/// Coordinates privacy-sensitive target transitions without changing WindowController.
+/// PrivacyGuardService owns application/repair of WDA. This class adds a cheap primary-HWND watchdog,
+/// burst scans after visibility/lifecycle transitions, fail-closed show verification, and an emergency
+/// fail-closed signal if a visible primary HWND remains unprotected after repair attempts.
 /// </summary>
 public sealed class PrivacyTransitionCoordinator : IDisposable
 {
     private static readonly int[] BurstAtMilliseconds = [0, 40, 100, 200, 400, 800, 1500];
+    private static readonly long FailClosedTicks = Math.Max(1L, Stopwatch.Frequency * 3 / 4); // 750 ms
 
     private readonly PrivacyGuardService _guard;
     private readonly AppLogger _log;
@@ -44,9 +45,12 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
     private int _disposed;
     private long _repairRequests;
     private long _lastRepairRequestTicks;
+    private long _unverifiedSinceTicks;
+    private int _failClosedSignaled;
     private PrivacyTransitionSnapshot _snapshot = PrivacyTransitionSnapshot.Initial;
 
     public PrivacyTransitionSnapshot Snapshot => Volatile.Read(ref _snapshot);
+    public event Action<IntPtr>? FailClosedRequested;
 
     public PrivacyTransitionCoordinator(PrivacyGuardService guard, AppLogger log)
     {
@@ -60,6 +64,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
     public void TrackPrimaryTarget(ChatGPTTarget? target)
     {
         if (Volatile.Read(ref _disposed) != 0) return;
+        ResetLossWindow();
         if (target is null)
         {
             Interlocked.Exchange(ref _primaryHwnd, 0);
@@ -79,20 +84,23 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
     public void NotifyVisibilityOrLifecycleTransition()
     {
         if (Volatile.Read(ref _disposed) != 0) return;
+        ResetLossWindow();
         StartBurst();
     }
 
     public async Task<bool> EnsureVerifiedAfterShowAsync(IntPtr hwnd, TimeSpan timeout)
     {
         if (hwnd == IntPtr.Zero || Volatile.Read(ref _disposed) != 0) return false;
+        ResetLossWindow();
         StartBurst();
 
         var stopwatch = Stopwatch.StartNew();
         while (stopwatch.Elapsed < timeout && Volatile.Read(ref _disposed) == 0)
         {
             if (!NativePrivacy.IsWindow(hwnd)) return false;
-            if (ReadVerified(hwnd, out var affinity)) return true;
+            if (ReadVerified(hwnd, out _)) return true;
 
+            NoteUnverified(hwnd);
             RequestRepair("show verification");
             try { await Task.Delay(25).ConfigureAwait(false); }
             catch (TaskCanceledException) { return false; }
@@ -100,7 +108,10 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
 
         var verified = ReadVerified(hwnd, out _);
         if (!verified)
+        {
+            NoteUnverified(hwnd);
             _log.Error($"Privacy fail-closed verification timed out for HWND 0x{hwnd.ToInt64():X} after {stopwatch.ElapsedMilliseconds} ms");
+        }
         return verified;
     }
 
@@ -116,6 +127,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
             Volatile.Write(ref _snapshot, new PrivacyTransitionSnapshot(
                 true, false, "window-gone", Interlocked.Read(ref _repairRequests), Snapshot.LastVerifiedUtc,
                 "Tracked primary HWND no longer exists; waiting for controller reacquire"));
+            ResetLossWindow();
             return;
         }
 
@@ -126,6 +138,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
             Volatile.Write(ref _snapshot, new PrivacyTransitionSnapshot(
                 true, false, "owner-mismatch", Interlocked.Read(ref _repairRequests), Snapshot.LastVerifiedUtc,
                 $"Tracked HWND owner changed: expected {expectedPid}, actual {pid}"));
+            NoteUnverified(hwnd);
             RequestRepair("primary owner transition");
             return;
         }
@@ -141,6 +154,7 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
         Volatile.Write(ref _snapshot, new PrivacyTransitionSnapshot(
             true, false, affinityText, Interlocked.Read(ref _repairRequests), Snapshot.LastVerifiedUtc,
             $"Primary capture affinity is not verified on HWND 0x{hwnd.ToInt64():X}; repair requested"));
+        NoteUnverified(hwnd);
         RequestRepair("primary watchdog");
     }
 
@@ -154,10 +168,33 @@ public sealed class PrivacyTransitionCoordinator : IDisposable
 
     private void RecordVerified(IntPtr hwnd, uint affinity)
     {
+        ResetLossWindow();
         var now = DateTimeOffset.UtcNow;
         Volatile.Write(ref _snapshot, new PrivacyTransitionSnapshot(
             true, true, $"0x{affinity:X}", Interlocked.Read(ref _repairRequests), now,
             $"Primary HWND 0x{hwnd.ToInt64():X} externally verified at WDA_EXCLUDEFROMCAPTURE"));
+    }
+
+    private void NoteUnverified(IntPtr hwnd)
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (Interlocked.Read(ref _unverifiedSinceTicks) == 0)
+            Interlocked.CompareExchange(ref _unverifiedSinceTicks, now, 0);
+
+        var since = Interlocked.Read(ref _unverifiedSinceTicks);
+        if (since == 0 || now - since < FailClosedTicks) return;
+        if (!Native.IsWindowVisible(hwnd)) return;
+        if (Interlocked.CompareExchange(ref _failClosedSignaled, 1, 0) != 0) return;
+
+        _log.Error($"Privacy fail-closed requested: visible ChatGPT HWND 0x{hwnd.ToInt64():X} remained unverified for at least 750 ms");
+        try { FailClosedRequested?.Invoke(hwnd); }
+        catch (Exception ex) { _log.Error("Privacy fail-closed callback failed: " + ex.GetType().Name); }
+    }
+
+    private void ResetLossWindow()
+    {
+        Interlocked.Exchange(ref _unverifiedSinceTicks, 0);
+        Interlocked.Exchange(ref _failClosedSignaled, 0);
     }
 
     private void RequestRepair(string reason)
