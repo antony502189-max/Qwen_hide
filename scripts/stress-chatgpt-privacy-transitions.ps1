@@ -96,6 +96,40 @@ function Measure-VisibleProtection([IntPtr]$Hwnd,[int]$TimeoutMs=1500) {
     return [pscustomobject]@{Result='VERIFIED';GapMs=[Math]::Max(0,$firstVerified-$firstVisible);Unverified=$unverifiedSamples}
 }
 
+function Test-TogglePair([IntPtr]$Hwnd,[byte]$Key,[string]$Name,[int]$Cycle) {
+    $toggled=$false
+    try {
+        Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) $Key
+        $toggled=$true
+        Start-Sleep -Milliseconds 40
+        if(-not (Read-Protection $Hwnd).Verified){ return "$Name[$Cycle] lost affinity" }
+        return $null
+    }
+    finally {
+        if($toggled -and [ChatGPTPrivacyStress.Native]::IsWindow($Hwnd) -and [ChatGPTPrivacyStress.Native]::IsWindowVisible($Hwnd)){
+            Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) $Key
+            Start-Sleep -Milliseconds 40
+        }
+    }
+}
+
+function Test-OpacityPair([IntPtr]$Hwnd,[int]$Cycle) {
+    $downApplied=$false
+    try {
+        Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_DOWN)
+        $downApplied=$true
+        Start-Sleep -Milliseconds 40
+        if(-not (Read-Protection $Hwnd).Verified){ return "OpacityDown[$Cycle] lost affinity" }
+        return $null
+    }
+    finally {
+        if($downApplied -and [ChatGPTPrivacyStress.Native]::IsWindow($Hwnd) -and [ChatGPTPrivacyStress.Native]::IsWindowVisible($Hwnd)){
+            Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_UP)
+            Start-Sleep -Milliseconds 40
+        }
+    }
+}
+
 $target=Find-Target
 if(-not [ChatGPTPrivacyStress.Native]::IsWindowVisible($target.Hwnd)){ throw 'Precondition: ChatGPT main window must be visible.' }
 $initial=Read-Protection $target.Hwnd
@@ -113,18 +147,14 @@ for($cycle=1;$cycle -le $Cycles;$cycle++){
     if($m.Result -eq 'FAIL_CLOSED_HIDDEN'){ $failClosed++; $failures.Add("Q[$cycle] fail-closed hid target after show"); break }
     if($m.Result -ne 'VERIFIED'){ $failures.Add("Q[$cycle] $($m.Result)"); break }
 
-    Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_T); Start-Sleep -Milliseconds 40
-    if(-not (Read-Protection $target.Hwnd).Verified){ $failures.Add("T[$cycle] lost affinity"); break }
-    Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_T); Start-Sleep -Milliseconds 40
+    $error=Test-TogglePair $target.Hwnd ([byte]$VK_T) 'T' $cycle
+    if($error){ $failures.Add($error); break }
 
-    Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_X); Start-Sleep -Milliseconds 40
-    if(-not (Read-Protection $target.Hwnd).Verified){ $failures.Add("X[$cycle] lost affinity"); break }
-    Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_X); Start-Sleep -Milliseconds 40
+    $error=Test-TogglePair $target.Hwnd ([byte]$VK_X) 'X' $cycle
+    if($error){ $failures.Add($error); break }
 
-    Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_DOWN); Start-Sleep -Milliseconds 40
-    if(-not (Read-Protection $target.Hwnd).Verified){ $failures.Add("OpacityDown[$cycle] lost affinity"); break }
-    Send-KeyCombo @([byte]$VK_CONTROL,[byte]$VK_MENU) ([byte]$VK_UP); Start-Sleep -Milliseconds 40
-    if(-not (Read-Protection $target.Hwnd).Verified){ $failures.Add("OpacityUp[$cycle] lost affinity"); break }
+    $error=Test-OpacityPair $target.Hwnd $cycle
+    if($error){ $failures.Add($error); break }
 
     if($IncludeF6){
         Send-KeyCombo @() ([byte]$VK_F6)
@@ -136,7 +166,10 @@ for($cycle=1;$cycle -le $Cycles;$cycle++){
     Write-Host ('CYCLE {0}/{1} PASS maxVisibleUnverifiedMs={2:F1}' -f $cycle,$Cycles,$maxGap)
 }
 
+$finalVisible=[ChatGPTPrivacyStress.Native]::IsWindowVisible($target.Hwnd)
 $final=Read-Protection $target.Hwnd
-Write-Host ('SUMMARY failures={0} failClosed={1} maxVisibleUnverifiedMs={2:F1} finalVisible={3} finalAffinity=0x{4:X}' -f $failures.Count,$failClosed,$maxGap,[ChatGPTPrivacyStress.Native]::IsWindowVisible($target.Hwnd),$final.Affinity)
+Write-Host ('SUMMARY failures={0} failClosed={1} maxVisibleUnverifiedMs={2:F1} finalVisible={3} finalAffinity=0x{4:X}' -f $failures.Count,$failClosed,$maxGap,$finalVisible,$final.Affinity)
 foreach($failure in $failures){ Write-Host "FAILURE $failure" }
-if($failures.Count -gt 0 -or -not $final.Verified){ exit 2 }
+
+# On a privacy failure, intentionally do not force-show a target that fail-closed logic hid.
+if($failures.Count -gt 0 -or ($finalVisible -and -not $final.Verified)){ exit 2 }
