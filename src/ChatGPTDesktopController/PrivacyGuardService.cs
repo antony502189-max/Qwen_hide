@@ -333,8 +333,16 @@ internal static class RemoteDisplayAffinity
     private const uint WAIT_OBJECT_0 = 0;
     private const uint TH32CS_SNAPMODULE = 0x00000008;
     private const uint TH32CS_SNAPMODULE32 = 0x00000010;
+    private static readonly SemaphoreSlim InjectionGate = new(1, 1);
 
     public static bool TrySet(uint pid, IntPtr hwnd, uint affinity, out string detail)
+    {
+        InjectionGate.Wait();
+        try { return TrySetSerialized(pid, hwnd, affinity, out detail); }
+        finally { InjectionGate.Release(); }
+    }
+
+    private static bool TrySetSerialized(uint pid, IntPtr hwnd, uint affinity, out string detail)
     {
         detail = "unknown";
         var process = NativePrivacy.OpenProcess(
