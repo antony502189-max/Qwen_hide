@@ -5,7 +5,7 @@ namespace ChatGPTDesktopController;
 public sealed class TrayController : IDisposable
 {
     private readonly System.Windows.Forms.NotifyIcon _icon;
-    private PrivacyGuardState? _lastPrivacyState;
+    private string? _lastEffectiveState;
     private string? _lastPrivacyDetail;
 
     public TrayController(Action show, Action diagnostics, Action exit)
@@ -25,28 +25,40 @@ public sealed class TrayController : IDisposable
         _icon.DoubleClick += (_, _) => show();
     }
 
-    public void UpdatePrivacy(PrivacyGuardSnapshot privacy)
+    public void UpdatePrivacy(PrivacyGuardSnapshot privacy, PrivacyTransitionSnapshot? primary = null)
     {
-        var stateText = privacy.State switch
-        {
-            PrivacyGuardState.Protected => "privacy protected",
-            PrivacyGuardState.Partial => "privacy NOT verified",
-            PrivacyGuardState.Failed => "privacy FAILED",
-            PrivacyGuardState.Unsupported => "privacy unsupported",
-            _ => "privacy waiting"
-        };
+        var primaryRequired = primary?.TargetTracked == true;
+        var primaryVerified = primary?.PrimaryVerified == true;
+        var effectiveProtected = privacy.State == PrivacyGuardState.Protected && (!primaryRequired || primaryVerified);
+
+        var stateText = effectiveProtected
+            ? "privacy protected"
+            : privacy.State switch
+            {
+                PrivacyGuardState.Waiting when !primaryRequired => "privacy waiting",
+                PrivacyGuardState.Unsupported => "privacy unsupported",
+                PrivacyGuardState.Failed => "privacy FAILED",
+                _ => "privacy NOT verified"
+            };
+
+        var detail = primaryRequired && !primaryVerified
+            ? primary!.Detail
+            : privacy.Detail;
+        var effectiveState = effectiveProtected ? "protected" : stateText;
+
         var tooltip = "ChatGPT Controller — " + stateText;
         _icon.Text = tooltip.Length <= 63 ? tooltip : tooltip[..63];
 
-        if (_lastPrivacyState == privacy.State && string.Equals(_lastPrivacyDetail, privacy.Detail, StringComparison.Ordinal)) return;
-        _lastPrivacyState = privacy.State;
-        _lastPrivacyDetail = privacy.Detail;
+        if (string.Equals(_lastEffectiveState, effectiveState, StringComparison.Ordinal) &&
+            string.Equals(_lastPrivacyDetail, detail, StringComparison.Ordinal)) return;
+        _lastEffectiveState = effectiveState;
+        _lastPrivacyDetail = detail;
 
-        if (privacy.State == PrivacyGuardState.Waiting) return;
-        _icon.BalloonTipTitle = privacy.State == PrivacyGuardState.Protected
+        if (privacy.State == PrivacyGuardState.Waiting && !primaryRequired) return;
+        _icon.BalloonTipTitle = effectiveProtected
             ? "ChatGPT capture privacy protected"
             : "ChatGPT capture privacy NOT verified";
-        _icon.BalloonTipText = privacy.Detail.Length <= 240 ? privacy.Detail : privacy.Detail[..240];
+        _icon.BalloonTipText = detail.Length <= 240 ? detail : detail[..240];
         _icon.ShowBalloonTip(3500);
     }
 
