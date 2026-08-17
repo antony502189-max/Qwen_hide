@@ -71,7 +71,17 @@ public partial class MainWindow : Window
     });
 
     private void Attach() { if (Volatile.Read(ref _shutdownStarted) != 0) return; var target = _locator.FindRunningTarget(); if (target is not null) { _window.Attach(target); _privacy.ScanNow(); } else _log.Info("ChatGPT Classic target not running."); }
-    private void ReacquireIfNeeded() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached) return; Attach(); TryAutoLaunch(); RefreshDiagnostics(); }
+    private void ReacquireIfNeeded()
+    {
+        if (Volatile.Read(ref _shutdownStarted) != 0) return;
+        _tray.UpdatePrivacy(_privacy.Snapshot);
+        if (_window.IsAttached)
+        {
+            if (IsVisible) RefreshDiagnostics();
+            return;
+        }
+        Attach(); TryAutoLaunch(); RefreshDiagnostics();
+    }
     private void TryAutoLaunch() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached || !_settings.AutoLaunchTarget) return; var path = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (path is not null) _locator.TryLaunch(path); }
     private void EnsureAttached() { if (!_window.IsAttached) Attach(); }
     private void RightCtrlChanged(bool down)
@@ -92,12 +102,13 @@ public partial class MainWindow : Window
     {
         using var process = Process.GetCurrentProcess(); var target = _window.Target; var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
         var privacy = _privacy.Snapshot;
+        _tray.UpdatePrivacy(privacy);
         StatusText.Text = target is null ? "ChatGPT Classic not attached. Open the installed ChatGPT Classic app, then click Attach / refresh." : "Attached: " + target.Summary;
         var lines = new List<string>
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
             "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
-            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, continuously verified and re-applied to recreated ChatGPT top-level windows", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
+            "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, continuously monitored and re-applied to recreated ChatGPT top-level windows", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
