@@ -20,6 +20,12 @@ internal static class PrivacyImmediateProtector
             return false;
         }
 
+        if (NativePrivacy.DwmIsCompositionEnabled(out var composing) != 0 || !composing)
+        {
+            log.Error($"Privacy immediate protection ({context}) refused: DWM composition is unavailable");
+            return false;
+        }
+
         Native.GetWindowThreadProcessId(target.Hwnd, out var actualPid);
         if (actualPid != (uint)target.ProcessId)
         {
@@ -32,6 +38,11 @@ internal static class PrivacyImmediateProtector
         {
             if (delay > 0) Thread.Sleep(delay);
             if (!NativePrivacy.IsWindow(target.Hwnd)) return false;
+            if (NativePrivacy.DwmIsCompositionEnabled(out composing) != 0 || !composing)
+            {
+                lastDetail = "DWM composition became unavailable";
+                break;
+            }
 
             Native.GetWindowThreadProcessId(target.Hwnd, out actualPid);
             if (actualPid != (uint)target.ProcessId) return false;
@@ -39,7 +50,7 @@ internal static class PrivacyImmediateProtector
             if (NativePrivacy.GetWindowDisplayAffinity(target.Hwnd, out var affinity) &&
                 affinity == PrivacyGuardService.WdaExcludeFromCapture)
             {
-                log.Info($"Privacy immediate protection ({context}) verified HWND 0x{target.Hwnd.ToInt64():X} at 0x11");
+                log.Info($"Privacy immediate protection ({context}) verified HWND 0x{target.Hwnd.ToInt64():X} at 0x11 with DWM active");
                 return true;
             }
 
@@ -52,15 +63,16 @@ internal static class PrivacyImmediateProtector
                 continue;
             }
 
-            if (NativePrivacy.GetWindowDisplayAffinity(target.Hwnd, out affinity) &&
+            if (NativePrivacy.DwmIsCompositionEnabled(out composing) == 0 && composing &&
+                NativePrivacy.GetWindowDisplayAffinity(target.Hwnd, out affinity) &&
                 affinity == PrivacyGuardService.WdaExcludeFromCapture)
             {
-                log.Info($"Privacy immediate protection ({context}) applied+verified HWND 0x{target.Hwnd.ToInt64():X}");
+                log.Info($"Privacy immediate protection ({context}) applied+verified HWND 0x{target.Hwnd.ToInt64():X} with DWM active");
                 return true;
             }
 
             var getterError = Marshal.GetLastWin32Error();
-            lastDetail += $"; post-set getter did not verify 0x11 (win32={getterError})";
+            lastDetail += $"; post-set runtime verification failed (win32={getterError})";
         }
 
         log.Error($"Privacy immediate protection ({context}) could not verify HWND 0x{target.Hwnd.ToInt64():X}: {lastDetail}");
