@@ -19,6 +19,21 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Guard stable window and hotkey surfaces
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @{
+            'src/ChatGPTDesktopController/WindowController.cs' = '6704033d90916de8260b1309d8169ae5e8a92606'
+            'src/ChatGPTDesktopController/GlobalHotkeys.cs' = '3d54d67e9981863e3253e2f3991e349e382ba4b4'
+          }
+          foreach ($entry in $expected.GetEnumerator()) {
+            $actual = (git hash-object -- $entry.Key).Trim()
+            if ($actual -ne $entry.Value) {
+              throw "Stable controller surface changed unexpectedly: $($entry.Key). Expected Git blob $($entry.Value), got $actual"
+            }
+          }
+
       - name: Validate privacy PowerShell probes
         shell: powershell
         run: |
