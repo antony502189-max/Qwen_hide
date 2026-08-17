@@ -3,6 +3,7 @@ namespace ChatGPTDesktopController;
 public partial class App : System.Windows.Application
 {
     private Mutex? _singleInstance;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -10,12 +11,23 @@ public partial class App : System.Windows.Application
         if (!firstInstance)
         {
             System.Windows.MessageBox.Show("ChatGPT Classic Controller is already running.", "ChatGPT Classic Controller", MessageBoxButton.OK, MessageBoxImage.Information);
-            Shutdown(); return;
+            Shutdown();
+            return;
         }
+
         AppPaths.Ensure();
         var log = new AppLogger();
         new RecoveryService(log).TryRecoverStaleState();
-        new MainWindow(log).Show();
+
+        // Keep the controller completely invisible at startup, like the Qwen controller.
+        // The diagnostics window is shown only on demand (Ctrl+Alt+D / tray action).
+        var controller = new MainWindow(log);
+        MainWindow = controller;
     }
-    protected override void OnExit(ExitEventArgs e) { _singleInstance?.Dispose(); base.OnExit(e); }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _singleInstance?.Dispose();
+        base.OnExit(e);
+    }
 }
