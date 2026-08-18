@@ -48,7 +48,7 @@ function Find-Target {
     $items=[Collections.Generic.List[object]]::new()
     $cb=[ChatGPTPrivacyStress.Native+EnumWindowsProc]{ param([IntPtr]$hwnd,[IntPtr]$lParam)
         [uint32]$ownerPid=0; [void][ChatGPTPrivacyStress.Native]::GetWindowThreadProcessId($hwnd,[ref]$ownerPid)
-        if(-not $pids.Contains($ownerPid)){ return $true }
+        if(-not $pids.Contains($ownerPid) -or -not [ChatGPTPrivacyStress.Native]::IsWindowVisible($hwnd)){ return $true }
         $rect=New-Object ChatGPTPrivacyStress.Native+RECT
         if(-not [ChatGPTPrivacyStress.Native]::GetWindowRect($hwnd,[ref]$rect)){ return $true }
         $w=$rect.Right-$rect.Left; $h=$rect.Bottom-$rect.Top
@@ -147,14 +147,14 @@ for($cycle=1;$cycle -le $Cycles;$cycle++){
     if($m.Result -eq 'FAIL_CLOSED_HIDDEN'){ $failClosed++; $failures.Add("Q[$cycle] fail-closed hid target after show"); break }
     if($m.Result -ne 'VERIFIED'){ $failures.Add("Q[$cycle] $($m.Result)"); break }
 
-    $error=Test-TogglePair $target.Hwnd ([byte]$VK_T) 'T' $cycle
-    if($error){ $failures.Add($error); break }
+    $toggleError=Test-TogglePair $target.Hwnd ([byte]$VK_T) 'T' $cycle
+    if($toggleError){ $failures.Add($toggleError); break }
 
-    $error=Test-TogglePair $target.Hwnd ([byte]$VK_X) 'X' $cycle
-    if($error){ $failures.Add($error); break }
+    $toggleError=Test-TogglePair $target.Hwnd ([byte]$VK_X) 'X' $cycle
+    if($toggleError){ $failures.Add($toggleError); break }
 
-    $error=Test-OpacityPair $target.Hwnd $cycle
-    if($error){ $failures.Add($error); break }
+    $toggleError=Test-OpacityPair $target.Hwnd $cycle
+    if($toggleError){ $failures.Add($toggleError); break }
 
     if($IncludeF6){
         Send-KeyCombo @() ([byte]$VK_F6)
