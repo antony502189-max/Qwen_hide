@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private readonly TrayController _tray;
     private readonly PrivacyGuardService _privacy;
     private readonly PrivacyTransitionCoordinator _privacyTransitions;
+    private readonly TaskbarVisibilityService _taskbarVisibility;
     private readonly ControllerSettings _settings;
     private readonly System.Windows.Threading.DispatcherTimer _reacquireTimer;
     private readonly object _audioGate = new();
@@ -35,6 +36,7 @@ public partial class MainWindow : Window
         _privacy = new PrivacyGuardService(log);
         _privacyTransitions = new PrivacyTransitionCoordinator(_privacy, log);
         _privacyTransitions.FailClosedRequested += PrivacyFailClosedRequested;
+        _taskbarVisibility = new TaskbarVisibilityService(log);
         SourceInitialized += (_, _) =>
         {
             try
@@ -76,10 +78,17 @@ public partial class MainWindow : Window
                         break;
                     }
 
+                    // Remove the shell button before a hidden ChatGPT HWND is shown. DeleteTab does not
+                    // change the window visibility, so this avoids adding another hide/show transition.
+                    if (wasHidden && targetBeforeToggle is not null)
+                        _taskbarVisibility.EnsureHidden(targetBeforeToggle.Hwnd, force: true);
+
                     var toggled = _window.ToggleVisibility();
                     if (toggled && wasHidden && !_window.Hidden)
                     {
-                        await VerifyVisibleTargetPrivacyAsync("Ctrl+Alt+Q post-show");
+                        var verified = await VerifyVisibleTargetPrivacyAsync("Ctrl+Alt+Q post-show");
+                        if (verified && _window.Target is { } shownTarget)
+                            _ = ReassertTaskbarSuppressionAsync(shownTarget.Hwnd);
                     }
                     else if (toggled && !wasHidden && _window.Hidden)
                     {
@@ -109,11 +118,33 @@ public partial class MainWindow : Window
                 case 6: EnsureAttached(); await _paste.PasteImageAsync(_window.Target, _window); break;
                 case 7: EnsureAttached(); _voice.Probe(_window.Target); ShowController(); break;
                 case 8:
-                    _capture = ScreenshotService.CaptureActiveMonitorToClipboard(_window.Target?.Hwnd ?? IntPtr.Zero);
+                {
+                    EnsureAttached();
+                    var captureTarget = _window.Target;
+                    var captureTargetVisible = captureTarget is not null && !_window.Hidden &&
+                                               Native.IsWindow(captureTarget.Hwnd) && Native.IsWindowVisible(captureTarget.Hwnd);
+
+                    // F6 must never create a hide/show transition during an active screen share. Verify
+                    // exclusion synchronously first; if it cannot be established, refuse the screenshot and
+                    // let the existing fail-closed path hide an actually unprotected visible target.
+                    if (captureTargetVisible && captureTarget is not null &&
+                        !PrivacyImmediateProtector.EnsureVerified(captureTarget, _log, "F6 pre-capture"))
+                    {
+                        _capture = new ScreenshotResult(false,
+                            "F6 refused: ChatGPT capture exclusion could not be verified before screenshot.",
+                            DateTimeOffset.Now);
+                        _log.Error("F6 privacy gate refused capture because visible ChatGPT was not verified at 0x11.");
+                        _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
+                        await VerifyVisibleTargetPrivacyAsync("F6 pre-capture failure");
+                        break;
+                    }
+
+                    _capture = ScreenshotService.CaptureActiveMonitorToClipboard(captureTarget?.Hwnd ?? IntPtr.Zero);
                     _log.Info("F6: " + _capture.Detail);
                     _privacyTransitions.NotifyVisibilityOrLifecycleTransition();
-                    await VerifyVisibleTargetPrivacyAsync("F6 restore");
+                    await VerifyVisibleTargetPrivacyAsync("F6 post-capture");
                     break;
+                }
                 case 9: EnsureAttached(); _voice.Probe(_window.Target); _window.EnsureInteractive(() => _voice.Invoke(_window.Target)); break;
             }
         }
@@ -174,6 +205,7 @@ public partial class MainWindow : Window
             var immediateVerified = PrivacyImmediateProtector.EnsureVerified(target, _log, "target attach");
             _privacyTransitions.TrackPrimaryTarget(target);
             _privacy.ScanNow();
+            _ = ReassertTaskbarSuppressionAsync(target.Hwnd);
 
             // A window hidden by the startup gate stays hidden. The user can reveal it with Ctrl+Alt+Q,
             // which now requires verified 0x11 both before and immediately after ShowWindow.
@@ -190,12 +222,27 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task ReassertTaskbarSuppressionAsync(IntPtr hwnd)
+    {
+        // Explorer/Electron can re-register a taskbar button around ShowWindow. Re-issue DeleteTab in a
+        // short bounded burst without touching visibility or extended window styles.
+        foreach (var delay in new[] { 0, 50, 200, 500 })
+        {
+            if (delay > 0) await Task.Delay(delay);
+            if (Volatile.Read(ref _shutdownStarted) != 0 || !Native.IsWindow(hwnd)) return;
+            if (_window.Target?.Hwnd != hwnd) return;
+            _taskbarVisibility.EnsureHidden(hwnd, force: true);
+        }
+    }
+
     private void ReacquireIfNeeded()
     {
         if (Volatile.Read(ref _shutdownStarted) != 0) return;
         _tray.UpdatePrivacy(_privacy.Snapshot, _privacyTransitions.Snapshot);
         if (_window.IsAttached)
         {
+            if (_window.Target is { } attachedTarget)
+                _taskbarVisibility.EnsureHidden(attachedTarget.Hwnd);
             if (IsVisible) RefreshDiagnostics();
             return;
         }
@@ -203,7 +250,10 @@ public partial class MainWindow : Window
         Attach();
         TryAutoLaunch();
         if (_window.IsAttached && !_window.Hidden && _window.Target is { } target && Native.IsWindowVisible(target.Hwnd))
+        {
             _ = VerifyVisibleTargetPrivacyAsync("target reacquire");
+            _ = ReassertTaskbarSuppressionAsync(target.Hwnd);
+        }
         RefreshDiagnostics();
     }
     private void TryAutoLaunch() { if (Volatile.Read(ref _shutdownStarted) != 0 || _window.IsAttached || !_settings.AutoLaunchTarget) return; var path = _locator.FindInstalledExecutable(_settings.ExecutablePath); if (path is not null) _locator.TryLaunch(path); }
@@ -256,14 +306,22 @@ public partial class MainWindow : Window
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
-        lines.AddRange([$"  Right Ctrl audio hook: {(_hotkeys.RightCtrlHookReady ? "registered" : "FAILED")}", $"  Ctrl+Alt+Esc emergency: {(_emergency.Registered ? "registered" : "FAILED " + _emergency.Win32Error)}", "", "Window", $"  opacity: {_window.Opacity:P0}", $"  TopMost: {_window.TopMost}", $"  click-through: {_window.ClickThrough}", $"  hidden: {_window.Hidden}", "", "Screenshot", $"  last: {_capture.Detail}", "", "Paste", $"  stage: {_paste.LastResult.Stage}", $"  method: {_paste.LastResult.Method}", $"  detail: {_paste.LastResult.Detail}", "", "Voice", $"  native shortcut: {_voice.Status.Shortcut}", $"  last: {_voice.Status.LastInvocation}", $"  fallback: {_voice.Status.FallbackState}", "", "Audio", $"  Right Ctrl enabled: {_settings.RightCtrlAudioEnabled}", $"  status: {_audio?.Status ?? "Not started"}", $"  microphone: {_audio?.Microphone ?? "Not started"}", $"  loopback: {_audio?.Loopback ?? "Not started"}", $"  virtual output: {_audio?.VirtualOutput ?? "Not started"}", "  endpoint safety: Windows defaults are never selected or changed.", "", "Recovery", $"  journal exists: {_recovery.HasPendingSnapshot}", $"  path: {_recovery.JournalPath}"]);
+        lines.AddRange([$"  Right Ctrl audio hook: {(_hotkeys.RightCtrlHookReady ? "registered" : "FAILED")}", $"  Ctrl+Alt+Esc emergency: {(_emergency.Registered ? "registered" : "FAILED " + _emergency.Win32Error)}", "", "Window", $"  opacity: {_window.Opacity:P0}", $"  TopMost: {_window.TopMost}", $"  click-through: {_window.ClickThrough}", $"  hidden: {_window.Hidden}", $"  taskbar suppressed: {_taskbarVisibility.LastSucceeded}", $"  taskbar detail: {_taskbarVisibility.Detail}", "", "Screenshot", $"  last: {_capture.Detail}", "", "Paste", $"  stage: {_paste.LastResult.Stage}", $"  method: {_paste.LastResult.Method}", $"  detail: {_paste.LastResult.Detail}", "", "Voice", $"  native shortcut: {_voice.Status.Shortcut}", $"  last: {_voice.Status.LastInvocation}", $"  fallback: {_voice.Status.FallbackState}", "", "Audio", $"  Right Ctrl enabled: {_settings.RightCtrlAudioEnabled}", $"  status: {_audio?.Status ?? "Not started"}", $"  microphone: {_audio?.Microphone ?? "Not started"}", $"  loopback: {_audio?.Loopback ?? "Not started"}", $"  virtual output: {_audio?.VirtualOutput ?? "Not started"}", "  endpoint safety: Windows defaults are never selected or changed.", "", "Recovery", $"  journal exists: {_recovery.HasPendingSnapshot}", $"  path: {_recovery.JournalPath}"]);
         DetailsText.Text = string.Join(Environment.NewLine, lines);
     }
 
     private void AttachClick(object sender, RoutedEventArgs e) { Attach(); RefreshDiagnostics(); }
     private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); }
     private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings, _audioDevices ??= new AudioDeviceService()) { Owner = this }; if (dialog.ShowDialog() == true) { TryAutoLaunch(); RefreshDiagnostics(); } }
-    private async void RestoreClick(object sender, RoutedEventArgs e) { if (_window.Restore()) await VerifyVisibleTargetPrivacyAsync("manual restore"); RefreshDiagnostics(); }
+    private async void RestoreClick(object sender, RoutedEventArgs e)
+    {
+        if (_window.Restore())
+        {
+            await VerifyVisibleTargetPrivacyAsync("manual restore");
+            if (_window.Target is { } target) _ = ReassertTaskbarSuppressionAsync(target.Hwnd);
+        }
+        RefreshDiagnostics();
+    }
     private void ExitClick(object sender, RoutedEventArgs e) => ExitSafely();
     private void ShowController() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void RefreshAndShowDiagnostics() { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); ShowController(); }
@@ -284,7 +342,10 @@ public partial class MainWindow : Window
         var target = _window.Target;
         _window.Dispose();
         if (target is not null && Native.IsWindow(target.Hwnd) && Native.IsWindowVisible(target.Hwnd))
+        {
+            _taskbarVisibility.Restore(target.Hwnd);
             PrivacyImmediateProtector.EnsureVerified(target, _log, "controller shutdown restore");
+        }
 
         _privacy.Dispose();
         base.OnClosed(e);
