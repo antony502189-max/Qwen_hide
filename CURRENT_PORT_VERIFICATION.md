@@ -14,4 +14,11 @@ Observed on Windows x64 with OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0, 20 
 
 The port also corrects x64 INPUT union sizing and the GetCurrentThreadId DLL import. State/log/recovery storage is separated from Classic.
 
---stop is scoped to full-mode processes named ChatGPTController installed under %LOCALAPPDATA%\ChatGPTCurrentController\app. It uses the existing emergency recovery handler, without force termination or resetting capture affinity to zero.
+--stop is scoped to full-mode processes named ChatGPTController installed under %LOCALAPPDATA%\ChatGPTCurrentController\app. It uses the existing emergency recovery handler, without force termination. As of 21 October 2026, shutdown drains protection scans, restores the window and shell state, then resets capture affinity to WDA_NONE on current-package windows. The earlier test observations above predate this shutdown change.
+
+
+## Manual mode and ordinary shutdown, 21 October 2026
+
+The Windows Startup shortcut was removed on the configured machine; matching Run entries and scheduled tasks were not found. The controller now starts through the desktop enable shortcut only.
+
+The installed full-mode build was exercised twice. Before the first shutdown the target was hidden, topmost, click-through and at alpha 242. Shutdown restored a visible window with topmost/click-through off, alpha 255 and affinity 0. All 21 enumerated current-app windows reported WDA_NONE. A second enable/show/disable cycle reapplied 0x11 while enabled, returned shutdown exit code 0, then left all 21 windows at WDA_NONE after waiting for delayed callbacks. No controller process remained running. The native dictation binding was preserved.

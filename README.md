@@ -27,6 +27,8 @@ Use a new version directory when updating a running installation, then update yo
 - Emergency shutdown: **Ctrl+Alt+Esc**.
 - Diagnostics: **Ctrl+Alt+D**, or `--diagnostics` when starting a fresh instance.
 
+Start the controller manually when needed; do not place its shortcut in Windows Startup. Turning it off restores ordinary capture visibility (WDA_NONE), window state, taskbar and native tray access. The native Ctrl+Shift+D binding remains a ChatGPT preference and works independently of the controller.
+
 Default full mode starts without a visible controller window or controller tray icon. It suppresses the target taskbar button and attempts to hide ChatGPT's native tray icon. Settings, logs and recovery data are separate from Classic under `%LOCALAPPDATA%\ChatGPTCurrentController`.
 
 ## Hotkeys

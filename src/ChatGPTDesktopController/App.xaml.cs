@@ -68,7 +68,8 @@ public partial class App : System.Windows.Application
                         .FirstOrDefault(h => Native.WindowText(h) == "CGPTControllerEmergency");
                     // Reuse the tested emergency restore/exit handler. Never force-kill the controller.
                     if (emergency == IntPtr.Zero || !Native.PostMessage(emergency, 0x0312, new IntPtr(99), IntPtr.Zero) ||
-                        !process.WaitForExit(5000)) exitCode = 2;
+                        !process.WaitForExit(15000)) exitCode = 2;
+                    else if (process.ExitCode != 0) exitCode = process.ExitCode;
                 }
                 catch (ArgumentException) { }
                 catch (InvalidOperationException) { }

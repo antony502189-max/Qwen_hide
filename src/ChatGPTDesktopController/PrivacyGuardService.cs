@@ -44,6 +44,7 @@ public sealed class PrivacyGuardService : IDisposable
     private readonly IntPtr _winEventHook;
     private readonly ConcurrentDictionary<long, string> _lastWindowStates = new();
     private readonly ConcurrentDictionary<long, uint> _successfulRemoteApplications = new();
+    private readonly object _scanGate = new();
     private int _scanActive;
     private int _disposed;
     private PrivacyGuardSnapshot _snapshot = PrivacyGuardSnapshot.Initial;
@@ -96,7 +97,11 @@ public sealed class PrivacyGuardService : IDisposable
         if (Volatile.Read(ref _disposed) != 0 || Interlocked.Exchange(ref _scanActive, 1) != 0) return;
         _ = Task.Run(() =>
         {
-            try { ScanCore(); }
+            try
+            {
+                lock (_scanGate)
+                    if (Volatile.Read(ref _disposed) == 0) ScanCore();
+            }
             catch (Exception ex)
             {
                 _log.Error("Privacy guard scan failed: " + ex.GetType().Name);
@@ -138,6 +143,7 @@ public sealed class PrivacyGuardService : IDisposable
 
         foreach (var window in windows)
         {
+            if (Volatile.Read(ref _disposed) != 0) return;
             var result = ProtectWindow(window);
             if (result.Protected)
             {
@@ -288,7 +294,32 @@ public sealed class PrivacyGuardService : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _timer.Dispose();
         if (_winEventHook != IntPtr.Zero) NativePrivacy.UnhookWinEvent(_winEventHook);
-        // Deliberately do not clear WDA on exit; keeping protection on an existing HWND is safer.
+        // Drain the active scan before restoring capture visibility. A queued scan sees _disposed
+        // under this same gate, so it cannot reapply protection after shutdown cleanup.
+        lock (_scanGate) { }
+    }
+
+    public bool RestoreCaptureVisibility()
+    {
+        Dispose();
+        var restored = true;
+        foreach (var window in EnumerateChatGptTopLevelWindows())
+        {
+            if (!NativePrivacy.IsWindow(window.Hwnd)) continue;
+            Native.GetWindowThreadProcessId(window.Hwnd, out var owner);
+            if (owner != window.ProcessId) continue;
+            if (NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out var affinity) && affinity == WdaNone) continue;
+            if (!RemoteDisplayAffinity.TrySet(window.ProcessId, window.Hwnd, WdaNone, out var detail) ||
+                (NativePrivacy.GetWindowDisplayAffinity(window.Hwnd, out affinity) && affinity != WdaNone))
+            {
+                // A window may disappear while the app closes; this needs no restoration.
+                if (!NativePrivacy.IsWindow(window.Hwnd)) continue;
+                restored = false;
+                _log.Error($"Capture visibility restore failed for HWND 0x{window.Hwnd.ToInt64():X}: {detail}");
+            }
+        }
+        _log.Info(restored ? "ChatGPT capture visibility restored (WDA_NONE)." : "ChatGPT capture visibility restoration was incomplete.");
+        return restored;
     }
 
     private readonly record struct ChatGptWindow(IntPtr Hwnd, uint ProcessId, string Architecture);

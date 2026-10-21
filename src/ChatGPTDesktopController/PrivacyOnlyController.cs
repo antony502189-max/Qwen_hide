@@ -81,9 +81,10 @@ internal sealed class PrivacyOnlyController : IDisposable
     {
         _statusTimer.Stop();
         _guard.Dispose();
+        _guard.RestoreCaptureVisibility();
         _icon.Visible = false;
         _icon.Dispose();
         _menu.Dispose();
-        _log.Info("Current app privacy controller stopped; existing window affinity preserved.");
+        _log.Info("Current app privacy controller stopped; ordinary capture visibility restored.");
     }
 }

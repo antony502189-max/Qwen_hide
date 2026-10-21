@@ -318,10 +318,6 @@ public partial class MainWindow : Window
     private void Emergency()
     {
         if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0) return;
-        var target = _window.Target;
-        _window.Restore();
-        if (target is not null && Native.IsWindow(target.Hwnd) && Native.IsWindowVisible(target.Hwnd))
-            PrivacyImmediateProtector.EnsureVerified(target, _log, "emergency restore");
         lock (_audioGate) _audio?.Stop();
         Dispatcher.BeginInvoke(Close);
     }
@@ -369,6 +365,7 @@ public partial class MainWindow : Window
         _reacquireTimer.Stop();
         _privacyTransitions.FailClosedRequested -= PrivacyFailClosedRequested;
         _privacyTransitions.Dispose();
+        _privacy.Dispose();
 
         lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); }
         _tray.Dispose();
@@ -381,10 +378,9 @@ public partial class MainWindow : Window
         if (target is not null && Native.IsWindow(target.Hwnd) && Native.IsWindowVisible(target.Hwnd))
         {
             _taskbarVisibility.Restore(target.Hwnd);
-            PrivacyImmediateProtector.EnsureVerified(target, _log, "controller shutdown restore");
         }
 
-        _privacy.Dispose();
+        if (!_privacy.RestoreCaptureVisibility()) System.Windows.Application.Current.Shutdown(2);
         base.OnClosed(e);
     }
 }
