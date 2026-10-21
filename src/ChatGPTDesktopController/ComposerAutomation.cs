@@ -24,7 +24,7 @@ public sealed class ComposerAutomation
         Set(PasteStage.ModifiersReleased, "GetAsyncKeyState", "Ctrl/Alt/V released");
 
         if (target is null || !Native.IsWindow(target.Hwnd))
-            return Fail("target", "ChatGPT Classic not attached");
+            return Fail("target", "ChatGPT not attached");
 
         Set(PasteStage.TargetResolved, "validated package", target.Summary);
         PasteResult? result = null;
@@ -35,7 +35,7 @@ public sealed class ComposerAutomation
     private PasteResult FocusAndPaste(ChatGPTTarget target)
     {
         if (!Native.TryActivateWindow(target.Hwnd))
-            return Fail("Win32 activation", "Could not activate ChatGPT Classic");
+            return Fail("Win32 activation", "Could not activate ChatGPT");
         Set(PasteStage.Activated, "Win32 activation", "Target foreground handoff completed");
 
         if (!TryFocusComposer(target.Hwnd, out var method, out var why))

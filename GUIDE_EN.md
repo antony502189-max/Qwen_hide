@@ -1,19 +1,13 @@
-# ChatGPT Classic Controller — guide
+# Current ChatGPT Controller guide
 
-1. Open the normal installed ChatGPT Classic application.
-2. Run `ChatGPTDesktopController.exe`.
-3. Use `Attach / refresh` if it was opened after the controller.
+This port targets the Microsoft Store OpenAI.Codex package on Windows x64, rather than ChatGPT Classic. Follow [README](README.md) for build, installation, hotkeys and native dictation configuration.
 
-The notification-area icon can restore the controller, open diagnostics, or exit safely. Settings can start the controller in that area and optionally open the verified installed ChatGPT Classic executable when no target is running. Reacquisition is a low-frequency five-second check and validates the executable path each time.
+Enable: installed ChatGPTController.exe without arguments. Disable: the same file with --stop. Install under %LOCALAPPDATA%\ChatGPTCurrentController\app\<version> with that filename. Shutdown invokes graceful emergency recovery; exit code 2 means exit was not confirmed.
 
-Only one controller instance may run at a time. Hide/show preserves whether the target was minimized, maximized, or normal before it was hidden.
+Ctrl+Alt+Esc restores the window and exits. Ctrl+Alt+Q only hides/shows ChatGPT while the controller keeps running. Ctrl+Alt+D opens diagnostics. The controller window and its tray icon are hidden by default in full mode.
 
-Hotkeys: `Ctrl+Alt+Q` hide/show; `Ctrl+Alt+X` click-through; `Ctrl+Alt+T` TopMost; `Ctrl+Alt+Up/Down` opacity (35–100%); `F6` capture the active work window to the native Windows Clipboard; `Ctrl+Alt+V` restore/activate ChatGPT, focus the UI Automation composer, then send Ctrl+V; `Ctrl+Alt+D` diagnostics; `Ctrl+Alt+Esc` restore and quit.
+The optional --privacy-only mode has its own visible tray menu; exit that mode through its menu. The enable/disable shortcuts are for full mode.
 
-Paste intentionally fails with diagnostics if the ChatGPT composer is not exposed reliably through UI Automation. It never uses a coordinate click fallback. Hold no modifiers while it completes: the controller explicitly waits for Ctrl/Alt/V to be released before sending the paste.
+Native Ctrl+Shift+D dictation is configured separately in ChatGPT and requires a full restart. The dictation overlay's capture exclusion is not verified. No particular third-party screen-sharing application was tested.
 
-Voice does not guess an undocumented ChatGPT shortcut. On the observed target, the native shortcut was not exposed, so `Ctrl+Shift+R` invokes the real accessible voice control through UI Automation `InvokePattern` (not a coordinate click). The optional Right Ctrl audio mix starts only when Settings has an explicit physical mic, loopback source, and recognized non-default virtual output. It never alters Windows defaults or conference-app microphone selections; this machine currently has no recognized virtual output, so it refuses to start.
-
-The recovery journal is only written immediately before the first window mutation. On normal exit, emergency exit, or next startup after a crash it restores original visibility, styles, topmost state, alpha/layering, and window placement.
-
-Screen-share exclusion is not supported or claimed. Windows display affinity does not guarantee exclusion from full-desktop conferencing shares.
+See [verification notes](CURRENT_PORT_VERIFICATION.md). Historical Classic capture scripts and audit files do not validate this port.

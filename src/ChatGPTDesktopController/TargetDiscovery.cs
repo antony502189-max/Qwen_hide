@@ -16,13 +16,13 @@ public sealed class ChatGPTProcessLocator
     public ChatGPTTarget? FindRunningTarget()
     {
         var candidates = new List<ChatGPTTarget>();
-        foreach (var process in Process.GetProcessesByName("ChatGPT Classic"))
+        foreach (var process in Process.GetProcessesByName("ChatGPT"))
         {
             try
             {
                 if (process.Id == Environment.ProcessId) continue;
                 var path = TryPath(process);
-                if (!IsChatGPTClassicExecutable(path)) continue;
+                if (!IsTargetExecutable(path)) continue;
                 foreach (var hwnd in Native.TopLevelWindows((uint)process.Id))
                 {
                     if (!Native.IsWindowVisible(hwnd)) continue;
@@ -37,26 +37,21 @@ public sealed class ChatGPTProcessLocator
 
     public string? FindInstalledExecutable(string? configured = null)
     {
-        if (IsChatGPTClassicExecutable(configured)) return configured;
+        if (IsTargetExecutable(configured)) return configured;
         var running = FindRunningTarget(); if (running is not null) return running.ExecutablePath;
-        foreach (var keyName in new[] { @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT Classic.exe", @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT Classic.exe" })
+        foreach (var keyName in new[] { @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe", @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe" })
             foreach (var hive in new[] { Registry.CurrentUser, Registry.LocalMachine })
-                try { var candidate = hive.OpenSubKey(keyName)?.GetValue(null)?.ToString()?.Trim('"'); if (IsChatGPTClassicExecutable(candidate)) return candidate; } catch { }
+                try { using var key = hive.OpenSubKey(keyName); var candidate = key?.GetValue(null)?.ToString()?.Trim('"'); if (IsTargetExecutable(candidate)) return candidate; } catch { }
         var windowsApps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
-        try { return Directory.EnumerateFiles(windowsApps, "ChatGPT Classic.exe", SearchOption.AllDirectories).FirstOrDefault(IsChatGPTClassicExecutable); } catch { return null; }
+        try { return Directory.EnumerateDirectories(windowsApps, "OpenAI.Codex_*").OrderByDescending(Directory.GetLastWriteTimeUtc).Select(x => Path.Combine(x, "app", "ChatGPT.exe")).FirstOrDefault(IsTargetExecutable); } catch { return null; }
     }
     public bool TryLaunch(string path)
     {
-        if (!IsChatGPTClassicExecutable(path)) return false;
+        if (!IsTargetExecutable(path)) return false;
         try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path)! }); return true; }
         catch (Exception ex) { _log.Error("Target launch failed: " + ex.GetType().Name); return false; }
     }
-    public static bool IsChatGPTClassicExecutable(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || !Path.GetFileName(path).Equals("ChatGPT Classic.exe", StringComparison.OrdinalIgnoreCase)) return false;
-        var full = Path.GetFullPath(path);
-        return full.Contains("\\WindowsApps\\OpenAI.ChatGPT-Desktop_", StringComparison.OrdinalIgnoreCase);
-    }
+    public static bool IsTargetExecutable(string? path) => CurrentAppPrivacyPolicy.IsInstalledTarget(path);
     public static string DetectPortableExecutableArchitecture(string path)
     {
         try

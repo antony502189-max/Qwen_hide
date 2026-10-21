@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private readonly PrivacyGuardService _privacy;
     private readonly PrivacyTransitionCoordinator _privacyTransitions;
     private readonly TaskbarVisibilityService _taskbarVisibility;
+    private readonly TrayIconVisibilityService _nativeTray;
     private readonly ControllerSettings _settings;
     private readonly System.Windows.Threading.DispatcherTimer _reacquireTimer;
     private readonly object _audioGate = new();
@@ -29,7 +30,10 @@ public partial class MainWindow : Window
     {
         InitializeComponent(); _log = log; _settings = SettingsService.Load(); _locator = new(log); _recovery = new(log);
         _window = new(log, _recovery); _paste = new(log); _voice = new(log); _hotkeys = new GlobalHotkeys(HandleHotkey);
-        _hotkeys.RightCtrlChanged += RightCtrlChanged; _emergency = new EmergencyHotkey(Emergency); _tray = new TrayController(ShowController, RefreshAndShowDiagnostics, ExitSafely);
+        _hotkeys.RightCtrlChanged += RightCtrlChanged; _emergency = new EmergencyHotkey(Emergency); _tray = new TrayController(ShowController, RefreshAndShowDiagnostics, ExitSafely, _settings.StartInTray);
+        foreach (var hotkey in _hotkeys.Registrations)
+            _log.Info($"Hotkey {hotkey.Name}: {(hotkey.Registered ? "registered" : "FAILED " + hotkey.Win32Error)}");
+        _log.Info($"Emergency Ctrl+Alt+Esc: registered={_emergency.Registered}, error={_emergency.Win32Error}; Right Ctrl hook={_hotkeys.RightCtrlHookReady}");
 
         // Capture protection is intentionally isolated from WindowController and all stable hotkeys.
         // It only applies/verifies Windows display affinity and never rewrites opacity/TopMost/click-through state.
@@ -37,6 +41,7 @@ public partial class MainWindow : Window
         _privacyTransitions = new PrivacyTransitionCoordinator(_privacy, log);
         _privacyTransitions.FailClosedRequested += PrivacyFailClosedRequested;
         _taskbarVisibility = new TaskbarVisibilityService(log);
+        _nativeTray = new TrayIconVisibilityService(log);
         SourceInitialized += (_, _) =>
         {
             try
@@ -58,6 +63,7 @@ public partial class MainWindow : Window
         if (Volatile.Read(ref _shutdownStarted) != 0) return;
         try
         {
+            _log.Info($"Hotkey received: {id}");
             switch (id)
             {
                 case 1:
@@ -115,7 +121,10 @@ public partial class MainWindow : Window
                     EnsureAttached();
                     if (_window.AdjustOpacity(-.05)) await VerifyVisibleTargetPrivacyAsync("opacity transition");
                     break;
-                case 6: EnsureAttached(); await _paste.PasteImageAsync(_window.Target, _window); break;
+                case 6:
+                    if (await PrepareVisibleTargetForInteractionAsync("paste"))
+                        await _paste.PasteImageAsync(_window.Target, _window);
+                    break;
                 case 7: EnsureAttached(); _voice.Probe(_window.Target); ShowController(); break;
                 case 8:
                 {
@@ -145,12 +154,34 @@ public partial class MainWindow : Window
                     await VerifyVisibleTargetPrivacyAsync("F6 post-capture");
                     break;
                 }
-                case 9: EnsureAttached(); _voice.Probe(_window.Target); _window.EnsureInteractive(() => _voice.Invoke(_window.Target)); break;
+                case 9:
+                    if (await PrepareVisibleTargetForInteractionAsync("voice"))
+                    {
+                        _voice.Probe(_window.Target);
+                        _window.EnsureInteractive(() => _voice.Invoke(_window.Target));
+                    }
+                    break;
             }
         }
         catch (Exception ex) { _log.Error($"Hotkey {id} failed: {ex.GetType().Name}"); }
         finally { if (Volatile.Read(ref _shutdownStarted) == 0) RefreshDiagnostics(); }
     });
+
+    private async Task<bool> PrepareVisibleTargetForInteractionAsync(string context)
+    {
+        EnsureAttached();
+        var target = _window.Target;
+        if (target is null) return false;
+        if (_window.Hidden)
+        {
+            if (!PrivacyImmediateProtector.EnsureVerified(target, _log, context + " pre-show")) return false;
+            _taskbarVisibility.EnsureHidden(target.Hwnd, force: true);
+            if (!_window.ToggleVisibility()) return false;
+            _ = ReassertTaskbarSuppressionAsync(target.Hwnd);
+            if (_settings.HideChatGptTrayIcon) _nativeTray.EnsureHidden(target);
+        }
+        return await VerifyVisibleTargetPrivacyAsync(context + " prepare");
+    }
 
     private Task<bool> VerifyVisibleTargetPrivacyAsync(string context)
     {
@@ -205,6 +236,7 @@ public partial class MainWindow : Window
             var immediateVerified = PrivacyImmediateProtector.EnsureVerified(target, _log, "target attach");
             _privacyTransitions.TrackPrimaryTarget(target);
             _privacy.ScanNow();
+            if (_settings.HideChatGptTrayIcon) _nativeTray.EnsureHidden(target);
             _ = ReassertTaskbarSuppressionAsync(target.Hwnd);
 
             // A window hidden by the startup gate stays hidden. The user can reveal it with Ctrl+Alt+Q,
@@ -218,7 +250,7 @@ public partial class MainWindow : Window
         else
         {
             _privacyTransitions.TrackPrimaryTarget(null);
-            _log.Info("ChatGPT Classic target not running.");
+            _log.Info("ChatGPT target not running.");
         }
     }
 
@@ -242,7 +274,10 @@ public partial class MainWindow : Window
         if (_window.IsAttached)
         {
             if (_window.Target is { } attachedTarget)
+            {
                 _taskbarVisibility.EnsureHidden(attachedTarget.Hwnd);
+                if (_settings.HideChatGptTrayIcon) _nativeTray.EnsureHidden(attachedTarget);
+            }
             if (IsVisible) RefreshDiagnostics();
             return;
         }
@@ -297,22 +332,23 @@ public partial class MainWindow : Window
         var privacy = _privacy.Snapshot;
         var transitions = _privacyTransitions.Snapshot;
         _tray.UpdatePrivacy(privacy, transitions);
-        StatusText.Text = target is null ? "ChatGPT Classic not attached. Open the installed ChatGPT Classic app, then click Attach / refresh." : "Attached: " + target.Summary;
+        StatusText.Text = target is null ? "ChatGPT not attached. Open the installed ChatGPT app, then click Attach / refresh." : "Attached: " + target.Summary;
         var lines = new List<string>
         {
             "Controller", $"  version: {version}", $"  PID: {process.Id}", $"  RAM: {process.WorkingSet64 / 1024 / 1024} MB", $"  threads: {process.Threads.Count}", $"  handles: {process.HandleCount}", "",
-            "ChatGPT Classic", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
+            "ChatGPT", $"  attached: {_window.IsAttached}", $"  PID: {target?.ProcessId}", $"  HWND: 0x{target?.Hwnd.ToInt64():X}", $"  executable: {target?.ExecutablePath}", $"  process: {target?.ProcessName}", $"  class: {target?.WindowClass}", $"  title: {target?.WindowTitle}", $"  architecture: {target?.Architecture ?? "unknown"}", "",
             "Capture privacy", $"  state: {privacy.State}", $"  DWM composing: {privacy.DwmComposing}", $"  protected windows: {privacy.WindowsProtected}/{privacy.WindowsSeen}", $"  externally verified: {privacy.WindowsVerified}/{privacy.WindowsSeen}", $"  failed windows: {privacy.WindowsFailed}", $"  detail: {privacy.Detail}", $"  primary verified: {transitions.PrimaryVerified}", $"  primary affinity: {transitions.Affinity}", $"  watchdog repairs requested: {transitions.RepairRequests}", $"  transition detail: {transitions.Detail}", "  mode: WDA_EXCLUDEFROMCAPTURE, hide-first startup + pre/post-show verification + synchronous visible-transition verification + event/watchdog repair", "  fail-closed: an unverified hidden target is not shown; unverified visible transitions are hidden immediately; sustained loss or DWM loss also hides ChatGPT", "  boundary: best-effort Windows public-capture protection; not a universal DRM guarantee", "",
             "Hotkeys"
         };
         lines.AddRange(_hotkeys.Registrations.Select(x => $"  {x.Name}: {(x.Registered ? "registered" : "FAILED " + x.Win32Error)}"));
         lines.AddRange([$"  Right Ctrl audio hook: {(_hotkeys.RightCtrlHookReady ? "registered" : "FAILED")}", $"  Ctrl+Alt+Esc emergency: {(_emergency.Registered ? "registered" : "FAILED " + _emergency.Win32Error)}", "", "Window", $"  opacity: {_window.Opacity:P0}", $"  TopMost: {_window.TopMost}", $"  click-through: {_window.ClickThrough}", $"  hidden: {_window.Hidden}", $"  taskbar suppressed: {_taskbarVisibility.LastSucceeded}", $"  taskbar detail: {_taskbarVisibility.Detail}", "", "Screenshot", $"  last: {_capture.Detail}", "", "Paste", $"  stage: {_paste.LastResult.Stage}", $"  method: {_paste.LastResult.Method}", $"  detail: {_paste.LastResult.Detail}", "", "Voice", $"  native shortcut: {_voice.Status.Shortcut}", $"  last: {_voice.Status.LastInvocation}", $"  fallback: {_voice.Status.FallbackState}", "", "Audio", $"  Right Ctrl enabled: {_settings.RightCtrlAudioEnabled}", $"  status: {_audio?.Status ?? "Not started"}", $"  microphone: {_audio?.Microphone ?? "Not started"}", $"  loopback: {_audio?.Loopback ?? "Not started"}", $"  virtual output: {_audio?.VirtualOutput ?? "Not started"}", "  endpoint safety: Windows defaults are never selected or changed.", "", "Recovery", $"  journal exists: {_recovery.HasPendingSnapshot}", $"  path: {_recovery.JournalPath}"]);
         DetailsText.Text = string.Join(Environment.NewLine, lines);
+        DetailsText.Text += Environment.NewLine + "Native ChatGPT tray: " + _nativeTray.Detail;
     }
 
     private void AttachClick(object sender, RoutedEventArgs e) { Attach(); RefreshDiagnostics(); }
     private void DiagnosticsClick(object sender, RoutedEventArgs e) { _voice.Probe(_window.Target); _privacy.ScanNow(); _privacyTransitions.NotifyVisibilityOrLifecycleTransition(); RefreshDiagnostics(); }
-    private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings, _audioDevices ??= new AudioDeviceService()) { Owner = this }; if (dialog.ShowDialog() == true) { TryAutoLaunch(); RefreshDiagnostics(); } }
+    private void SettingsClick(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings, _audioDevices ??= new AudioDeviceService()) { Owner = this }; if (dialog.ShowDialog() == true) { _tray.SetVisible(_settings.StartInTray); TryAutoLaunch(); RefreshDiagnostics(); } }
     private async void RestoreClick(object sender, RoutedEventArgs e)
     {
         if (_window.Restore())
@@ -336,6 +372,7 @@ public partial class MainWindow : Window
 
         lock (_audioGate) { _audio?.Dispose(); _audioDevices?.Dispose(); }
         _tray.Dispose();
+        _nativeTray.Dispose();
         _hotkeys.Dispose();
         _emergency.Dispose();
 

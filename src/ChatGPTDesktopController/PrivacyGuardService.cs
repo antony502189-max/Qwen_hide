@@ -23,13 +23,13 @@ public sealed record PrivacyGuardSnapshot(
     DateTimeOffset LastScanUtc)
 {
     public static PrivacyGuardSnapshot Initial { get; } =
-        new(PrivacyGuardState.Waiting, false, 0, 0, 0, 0, "Waiting for ChatGPT Classic", DateTimeOffset.MinValue);
+        new(PrivacyGuardState.Waiting, false, 0, 0, 0, 0, "Waiting for ChatGPT", DateTimeOffset.MinValue);
 }
 
 /// <summary>
-/// Best-effort capture protection for the installed ChatGPT Classic window.
+/// Best-effort capture protection for the installed ChatGPT window.
 /// SetWindowDisplayAffinity must run in the HWND-owning process, so a tiny x64 call stub executes
-/// SetWindowDisplayAffinity inside the owning ChatGPT Classic process. No target binary is patched.
+/// SetWindowDisplayAffinity inside the owning ChatGPT process. No target binary is patched.
 /// </summary>
 public sealed class PrivacyGuardService : IDisposable
 {
@@ -38,6 +38,7 @@ public sealed class PrivacyGuardService : IDisposable
     public const uint WdaExcludeFromCapture = 0x00000011;
 
     private readonly AppLogger _log;
+    private readonly bool _currentAppOnly;
     private readonly Timer _timer;
     private readonly NativePrivacy.WinEventDelegate _winEventDelegate;
     private readonly IntPtr _winEventHook;
@@ -49,9 +50,10 @@ public sealed class PrivacyGuardService : IDisposable
 
     public PrivacyGuardSnapshot Snapshot => Volatile.Read(ref _snapshot);
 
-    public PrivacyGuardService(AppLogger log)
+    public PrivacyGuardService(AppLogger log, bool currentAppOnly = true)
     {
         _log = log;
+        _currentAppOnly = currentAppOnly;
         _winEventDelegate = OnWinEvent;
         _winEventHook = NativePrivacy.SetWinEventHook(
             NativePrivacy.EVENT_OBJECT_CREATE,
@@ -116,7 +118,7 @@ public sealed class PrivacyGuardService : IDisposable
             _successfulRemoteApplications.Clear();
             Volatile.Write(ref _snapshot, new PrivacyGuardSnapshot(
                 PrivacyGuardState.Waiting, dwmComposing, 0, 0, 0, 0,
-                dwmComposing ? "Waiting for ChatGPT Classic windows" : "DWM composition unavailable",
+                dwmComposing ? (_currentAppOnly ? "Waiting for current ChatGPT/Codex windows" : "Waiting for ChatGPT windows") : "DWM composition unavailable",
                 DateTimeOffset.UtcNow));
             return;
         }
@@ -244,12 +246,12 @@ public sealed class PrivacyGuardService : IDisposable
         return new(true, false, remoteDetail + "; external getter unavailable: win32=" + Marshal.GetLastWin32Error());
     }
 
-    private static List<ChatGptWindow> EnumerateChatGptTopLevelWindows()
+    private List<ChatGptWindow> EnumerateChatGptTopLevelWindows()
     {
-        // Validate only ChatGPT Classic processes first. This avoids probing unrelated process modules
+        // Validate only ChatGPT processes first. This avoids probing unrelated process modules
         // on every 500 ms recovery scan and materially reduces CPU/access/EDR noise.
         var validProcesses = new Dictionary<uint, string>();
-        foreach (var process in Process.GetProcessesByName("ChatGPT Classic"))
+        foreach (var process in Process.GetProcessesByName(_currentAppOnly ? "ChatGPT" : "ChatGPT"))
         {
             using (process)
             {
@@ -257,7 +259,9 @@ public sealed class PrivacyGuardService : IDisposable
                 {
                     string? path;
                     try { path = process.MainModule?.FileName; } catch { continue; }
-                    if (!ChatGPTProcessLocator.IsChatGPTClassicExecutable(path)) continue;
+                    if (_currentAppOnly
+                        ? !CurrentAppPrivacyPolicy.IsInstalledTarget(path)
+                        : !ChatGPTProcessLocator.IsTargetExecutable(path)) continue;
                     validProcesses[(uint)process.Id] = ChatGPTProcessLocator.DetectPortableExecutableArchitecture(path!);
                 }
                 catch { }

@@ -3,7 +3,11 @@ name: ChatGPT Controller CI
 on:
   push:
     branches:
+      - main
       - feature/chatgpt-desktop-controller
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:

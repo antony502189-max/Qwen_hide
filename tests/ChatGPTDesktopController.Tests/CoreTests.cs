@@ -85,8 +85,8 @@ public sealed class CoreTests
     [Fact]
     public void Target_validation_rejects_unrelated_processes()
     {
-        Assert.False(ChatGPTProcessLocator.IsChatGPTClassicExecutable("C:\\Windows\\notepad.exe"));
-        Assert.False(ChatGPTProcessLocator.IsChatGPTClassicExecutable(null));
+        Assert.False(ChatGPTProcessLocator.IsTargetExecutable("C:\\Windows\\notepad.exe"));
+        Assert.False(ChatGPTProcessLocator.IsTargetExecutable(null));
     }
 
     [Fact]

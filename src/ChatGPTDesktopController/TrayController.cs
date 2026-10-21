@@ -8,7 +8,7 @@ public sealed class TrayController : IDisposable
     private string? _lastEffectiveState;
     private string? _lastPrivacyDetail;
 
-    public TrayController(Action show, Action diagnostics, Action exit)
+    public TrayController(Action show, Action diagnostics, Action exit, bool visible = false)
     {
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Show controller", null, (_, _) => show());
@@ -17,10 +17,10 @@ public sealed class TrayController : IDisposable
         menu.Items.Add("Exit safely", null, (_, _) => exit());
         _icon = new System.Windows.Forms.NotifyIcon
         {
-            Text = "ChatGPT Classic Controller",
+            Text = "ChatGPT Controller",
             Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application,
             ContextMenuStrip = menu,
-            Visible = true
+            Visible = visible
         };
         _icon.DoubleClick += (_, _) => show();
     }
@@ -59,8 +59,10 @@ public sealed class TrayController : IDisposable
             ? "ChatGPT capture privacy protected"
             : "ChatGPT capture privacy NOT verified";
         _icon.BalloonTipText = detail.Length <= 240 ? detail : detail[..240];
-        _icon.ShowBalloonTip(3500);
+        if (_icon.Visible) _icon.ShowBalloonTip(3500);
     }
+
+    public void SetVisible(bool visible) => _icon.Visible = visible;
 
     public void Dispose() { _icon.Visible = false; _icon.Dispose(); }
 }

@@ -155,7 +155,7 @@ public sealed class RecoveryService
                 return Deferred("post-restore verification");
 
             Delete();
-            _log.Info("Recovered stale ChatGPT Classic state.");
+            _log.Info("Recovered stale ChatGPT state.");
             return true;
         }
         catch (Exception ex)

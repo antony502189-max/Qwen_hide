@@ -1,7 +1,7 @@
 <Window x:Class="ChatGPTDesktopController.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Controller settings" Width="510" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
   <Grid Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
-    <StackPanel Grid.Row="1" Margin="0,14,0,0"><CheckBox x:Name="StartInTray" Content="Start controller in the notification area"/><CheckBox x:Name="AutoLaunch" Margin="0,8,0,0" Content="Open ChatGPT Classic if it is not running"/><TextBlock Margin="0,12,0,3" Text="ChatGPT Classic executable override (normally leave blank)"/><TextBox x:Name="ExecutablePath"/>
+    <StackPanel Grid.Row="1" Margin="0,14,0,0"><CheckBox x:Name="StartInTray" Content="Show controller icon in the notification area (off by default)"/><CheckBox x:Name="AutoLaunch" Margin="0,8,0,0" Content="Open ChatGPT if it is not running"/><TextBlock Margin="0,12,0,3" Text="ChatGPT executable override (normally leave blank)"/><TextBox x:Name="ExecutablePath"/>
       <TextBlock Margin="0,12,0,3" Text="Voice hotkey"/><TextBox x:Name="VoiceHotkey" IsReadOnly="True"/>
       <CheckBox x:Name="RightCtrlAudio" Margin="0,14,0,0" Content="Enable Right Ctrl guarded audio mix"/>
       <TextBlock Margin="0,8,0,3" Text="Physical microphone"/><ComboBox x:Name="Microphone" DisplayMemberPath="Name" SelectedValuePath="Id"/>

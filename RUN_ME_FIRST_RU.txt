@@ -1,7 +1,10 @@
-1. Откройте ChatGPT Classic.
-2. Запустите dist-single\ChatGPTDesktopController.exe.
-3. Убедитесь в окне контроллера, что статус «Attached».
-4. Нажмите Ctrl+Alt+Esc для безопасного аварийного восстановления и выхода.
+Версия для текущего ChatGPT (OpenAI.Codex), а не Classic.
 
-Для анализа доступности без изменения ChatGPT:
-powershell -ExecutionPolicy Bypass -File .\scripts\probe-chatgpt-classic.ps1
+1. Соберите: powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
+2. Установите EXE и создайте ярлыки по README.md / GUIDE_RU.md.
+3. Включение: установленный ChatGPTController.exe без аргументов.
+4. Выключение: тот же файл с --stop либо Ctrl+Alt+Esc.
+5. Ctrl+Alt+Q только прячет/показывает окно; Ctrl+Alt+D открывает диагностику.
+
+Скрытие всплывающей диктовки не подтверждено.
+Конкретная программа демонстрации экрана не проверялась.

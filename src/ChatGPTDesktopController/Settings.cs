@@ -6,6 +6,7 @@ public sealed class ControllerSettings
 {
     public string? ExecutablePath { get; set; }
     public bool StartInTray { get; set; }
+    public bool HideChatGptTrayIcon { get; set; } = true;
     public bool AutoLaunchTarget { get; set; }
     public double Opacity { get; set; } = 1;
     public string VoiceHotkey { get; set; } = "Ctrl+Shift+R";
